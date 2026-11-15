@@ -205,7 +205,12 @@ inline int mode_init() {
         else
             g_own = true;   // (the recorder thread: slot resets skip the wait; RX_VK_RECORDER_OWN=0 turns it off)
         const char* idle = getenv("RX_VK_RECORDER_IDLE");
-        g_idle_wait = idle && !strcmp(idle, "wait");
+        if (!idle)
+            g_idle_wait = true;
+        else if (!strcmp(idle, "wait"))
+            g_idle_wait = true;
+        else
+            g_idle_wait = false;   // (RX_VK_RECORDER_IDLE=spin: adaptive spin only)
     }
     int was = -1;
     if (!g_mode.compare_exchange_strong(was, m, std::memory_order_relaxed)) return was;   // (another thread read it first)
