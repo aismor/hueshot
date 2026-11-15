@@ -51,6 +51,7 @@
 #include "upscaler_rows.h"
 #include "auto_settings.h"
 #include "menu_restart.h"
+#include "threaded_rendering.h"   // (the Threaded rendering row's rule, and the one gate over its Auto)
 #include "vk_menu_i18n.h"
 #include "display_modes.h"   // (the Aspect ratio and Output resolution rows: the screen's sizes and their shapes)
 #ifndef HUESHOT_ENV_H   // (env_on: the switches' one rule)
@@ -1081,6 +1082,26 @@ const char* hn_vsync(int v, int variant) {
     }
     return variant <= 0 ? t[std::clamp(v, 0, 2)] : nullptr;
 }
+/// (the environment's switch for this run, over the Threaded rendering row)
+const char* threaded_env() {
+    if (getenv("RX_VK_ASYNC")) return "RX_VK_ASYNC";
+    if (getenv("RX_VK_RECORDER")) return "RX_VK_RECORDER";
+    return nullptr;
+}
+const char* hn_threaded(int v, int variant) {
+    static const char* const t[] = {
+        threaded::kAutoEnabled
+            ? "On where the processor has 12 or more threads for the game, and nothing rules it out; otherwise Off."
+            : "The same as Off, on every PC.",
+        "The picture is drawn on threads of its own while the game goes on to its next frame.",
+        "The picture is drawn on the game's own thread, as before."};
+    if (variant == 1 || (variant < 0 && threaded_env())) {
+        static char b[96];
+        snprintf(b, sizeof b, "%s is set: it chooses for this run.", threaded_env() ? threaded_env() : "RX_VK_ASYNC or RX_VK_RECORDER");
+        return b;
+    }
+    return variant <= 0 ? t[std::clamp(v, 0, 2)] : nullptr;
+}
 /// The Output resolution: the game's own, the player's own, or one of the screen's sizes as it compares with the screen (its
 /// own, larger, smaller; nothing where the screen's size is not known)
 const char* hn_output_res(int v, int variant) {
@@ -1258,6 +1279,9 @@ Row rows[] = {
     {TAB_GRAPHICS, "GPU and memory", nullptr, 0, 0, 0, nullptr, nullptr, nullptr, false, true, -1, true},
     {TAB_GRAPHICS, "GPU device", &opts.gpu_device, 0, 8, 1, tx_gpu,
      "Which graphics card the game runs on. Applies after a restart.", hn_gpu, true, true},
+    {TAB_GRAPHICS, "Threaded rendering", &opts.threaded_rendering, 0, 2, 1, tx_vsync,
+     "Draws the picture on threads of its own, beside the game's, on a processor with threads to spare. Applies after a "
+     "restart.", hn_threaded, true, true},
     {TAB_GRAPHICS, "VRAM budget", &opts.vram_budget, 0, kVramBudgets - 1, 1, tx_vram_budget,
      "How much video memory the game's textures may use, and its copies of game memory with them. Lower it if the game "
      "stutters after a while of play; a preset sets it.", hn_vram_budget, false, true},
@@ -1776,6 +1800,7 @@ std::string ini_path() {
 const char* ini_key(const Row& r) {
     if (r.value == &opts.output_res) return "output_res";   // (host/nn_applet.c reads it at the start)
     if (r.value == &opts.vsync) return "vsync";
+    if (r.value == &opts.threaded_rendering) return "threaded_rendering";
     // (rows renamed since their values were first saved keep their keys: an options file from before still loads)
     if (r.value == &opts.resolution) return "resolution";
     if (r.value == &opts.fps_cap) return "frame_rate_cap";   // (host/nn_vi.c reads it at the start, then HOS_OPT_FPS_CAP)
@@ -4280,6 +4305,38 @@ void menu_auto_for_gpu(const VkPhysicalDeviceProperties& props, ::auto_settings:
 
 // (the switches read once, at the first present: they are for the whole run, and each present asked twice)
 int menu_vsync() { static const int run = env_on("RX_VK_FIFO") ? 1 : env_on("RX_VK_IMMEDIATE") ? 2 : 0; return run ? run : opts.vsync; }
+bool menu_threaded_rendering() {
+    static const bool on = [] {
+        menu_init();
+        const unsigned cpus = usable_cpus();
+        const char* capture = getenv("RX_VK_CAPTURE");
+        const char* unsafe = capture && atoi(capture) == 0 ? "RX_VK_CAPTURE" :
+                             env_on("RX_VK_LOW_SPEC") ? "RX_VK_LOW_SPEC" : getenv("RX_VK_DUMP") ? "RX_VK_DUMP" :
+                             getenv("RX_VK_BENCH") ? "RX_VK_BENCH" : nullptr;
+        threaded::Choice c = threaded::choose(opts.threaded_rendering, cpus, unsafe != nullptr);
+        if (c.why == threaded::Why::AutoCpus && !pools_mirrored()) {
+            c = threaded::Choice{false, threaded::Why::AutoUnsafe};
+            unsafe = "the buffer pools have no mirrors";
+        }
+        switch (c.why) {
+        case threaded::Why::On: logf("vk: Threaded rendering: On (the render thread and the recorder thread)"); break;
+        case threaded::Why::Off: logf("vk: Threaded rendering: Off"); break;
+        case threaded::Why::AutoGate:
+            logf("vk: Threaded rendering: Auto: off (Auto is turned off in this build; %u logical processors, its rule is on "
+                 "from %u)", cpus, threaded::kAutoCpus);
+            break;
+        case threaded::Why::AutoUnsafe: logf("vk: Threaded rendering: Auto: off (not safe on this run: %s)", unsafe); break;
+        case threaded::Why::AutoFewCpus:
+            logf("vk: Threaded rendering: Auto: off (%u logical processors, on from %u)", cpus, threaded::kAutoCpus);
+            break;
+        case threaded::Why::AutoCpus:
+            logf("vk: Threaded rendering: Auto: on, the render thread and the recorder thread (%u logical processors)", cpus);
+            break;
+        }
+        return c.on;
+    }();
+    return on;
+}
 bool resolution_auto() { return opts.resolution == 0; }
 int resolution_scale() {
     const float s = upscaler_rows::percent(ur::snap_render(upscaler(), opts.resolution)) / 100.0f;

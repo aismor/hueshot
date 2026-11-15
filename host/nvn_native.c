@@ -20,6 +20,7 @@
    same functions as the proc table (nvn2_dispatch, from gen/nvn2_exports.c). */
 #include "hos.h"
 #include "../gpu/render/rx_nvn.h"
+#include "../gpu/vk/vk_api.h"   /* HOS_OPT_RENDER_THREAD: present poll when the render thread runs */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1139,12 +1140,17 @@ int hos_nvn_event_value(uint64_t guest_event, uint32_t *v) {
     return 1;
 }
 NV(nvnEventGetValue) {
-    {   /* (hueshot, experiment) HOS_PRESENT_NOWAIT=1: OoT's present poll (hos_thread.c present_poll) sees its frame's
-           event signalled at once: the replay reads memory as submitted, so the game may go on to the next frame
-           while this one is replayed, as far as the window's textures and the replay's queue let it */
+    {   /* (hueshot) HOS_PRESENT_NOWAIT=1 or the render thread (HOS_OPT_RENDER_THREAD from vk_replay.cpp async_on): OoT's
+           present poll sees its frame's event signalled at once */
+        int rx_option(int id, int otherwise);   /* (rx_backend.c) */
         static int nowait = -1;
-        if (nowait < 0) nowait = getenv("HOS_PRESENT_NOWAIT") && atoi(getenv("HOS_PRESENT_NOWAIT")) != 0;
-        if (nowait && (c->x[30] == 0x805904a0 || c->x[30] == 0x80590530)) { RET(1); return; }
+        int now = nowait;
+        if (now < 0) {
+            const char *e = getenv("HOS_PRESENT_NOWAIT");
+            now = e ? atoi(e) != 0 : rx_option(HOS_OPT_RENDER_THREAD, -1);
+            if (now >= 0) nowait = now = now != 0;
+        }
+        if (now && (c->x[30] == 0x805904a0 || c->x[30] == 0x80590530)) { RET(1); return; }
     }
     uint32_t v = 0; nvn_gpu_read(((const nvn_event *)P(0))->gpu, &v, 4); RET(v);
     if (sync_log()) hos_log("nvn: EventGetValue %p = %u (lr %#llx)", P(0), v, (unsigned long long)c->x[30]);

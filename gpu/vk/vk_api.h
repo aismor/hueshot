@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 22
+#define MKWVK_API_VERSION 23
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA, HOS_OPT_CHEAT_SPEED };
 /* (hueshot) the Gameplay tab's Text size (host/oot_text_size.c): 0 the game's, 1 110%, 2 125%, 3 150%, 4 175% */
 enum { HOS_OPT_TEXT_SIZE = 10 };
@@ -58,6 +58,10 @@ enum { HOS_OPT_AUTO_RUN = 55 };
 enum { HOS_OPT_FPS_CAP = 53 };
 /* Damage taken: 0 Half, 1 Normal (unchanged), 2 Double, 3 Quadruple. (56: Hueshot's Auto run has 55) */
 enum { HOS_OPT_DAMAGE_TAKEN = 56 };
+/* (HOS_OPT_RENDER_THREAD, 58: whether the render thread runs on this run, 1 or 0, as vk_replay.cpp async_on resolves once at
+   the start: RX_VK_ASYNC=1, or unset and the Insert menu's Threaded rendering On or its Auto's choice). host/nvn_native.c
+   answers the game's present poll at once with it. */
+enum { HOS_OPT_RENDER_THREAD = 58 };
 
 /* (hueshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of hueshot_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position (the bottom face button first:

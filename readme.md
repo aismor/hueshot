@@ -162,6 +162,10 @@ tabs — Graphics, Audio, Gameplay, Controls and Debug — and your choices are 
 
 - **Good starting points**, and what each preset picks: [Settings](docs/graphics-and-controls.md).
 - **Every option, choice and default, and the controls:** the [menu reference](docs/menu-reference.md).
+- **Threaded rendering:** On draws the picture on threads of its own (a render thread and a recorder thread) while the
+  game goes on to its next frame. Auto turns that on when the PC has 12 or more logical processors for the game and
+  nothing rules it out. Applies after a restart; do not use raw `RX_VK_ASYNC=1` in `hueshot_env.txt` without the frame
+  gate from this build.
 
 ## Mods
 

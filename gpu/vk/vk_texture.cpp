@@ -1928,7 +1928,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                     // being copied first (a 349 MB scratch beside the 349 MB staged))
                     // (hueshot: from 4 MB, not 16: the scene-size targets uploaded when the camera turns to the Deku Tree,
                     // 2779 x 1318 RGBA8 = 15 MB, took ~20 ms each on one thread, three in one frame: a 50 ms hitch)
-                    const uint32_t nthreads = block_bytes >= (4u << 20) && g.td == 1 && !g.tile_d
+                    const uint32_t nthreads = block_bytes >= (16u << 20) && g.td == 1 && !g.tile_d
                                                   ? std::clamp(std::thread::hardware_concurrency() / 2, 1u, 8u) : 1u;
                     uint64_t avail = 0;
                     const uint8_t* direct = host->gpu_ptr(tex.gpu + from, &avail);

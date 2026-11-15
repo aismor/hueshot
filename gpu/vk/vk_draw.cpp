@@ -691,8 +691,7 @@ void ensure_layout(Program& p) {
         add(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, st.vk_stage, st.info.image_descriptors);
     }
     // Compare the driver's push cost with the existing per-recording pools. Keep helper passes' push layouts unchanged.
-    static const bool descriptor_sets = env_on("RX_VK_DESCRIPTOR_SETS");
-    p.push = !descriptor_sets && dev.push_descriptor && vkCmdPushDescriptorSetKHR && total <= dev.max_push_descriptors;
+    p.push = dev.push_descriptor && vkCmdPushDescriptorSetKHR && total <= dev.max_push_descriptors;
     VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     if (p.push) li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     li.bindingCount = (uint32_t)bindings.size();
