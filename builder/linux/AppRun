@@ -1,0 +1,38 @@
+#!/bin/sh
+# The Hueshot AppImage: the builder window (builder/linux/hueshot_builder.py) with everything it builds the game with -
+# Python and the tools, clang and lld, a glibc 2.35 sysroot, FFmpeg, SDL2 and the Vulkan back end, built already.
+#   Hueshot.AppImage                  the builder window (Play is in the window, once a game is built)
+#   Hueshot.AppImage --play           start the game the builder saved, without opening the window
+#   Hueshot.AppImage --play <folder>  start the game in that folder
+#   Hueshot.AppImage <folder>         the same
+#   Hueshot.AppImage --cli <args>     nx2/make_game.py itself, e.g. --cli --nup game.nup --out ~/Games/Hueshot
+#   Hueshot.AppImage --launch <dir>  the game folder's launcher: Play, and Update when a newer release is out
+#   Hueshot.AppImage --update <dir>  download the new release (only the parts that changed) and build that folder again
+HERE="$(dirname "$(readlink -f "$0")")"
+LIB="$HERE/usr/lib/hueshot"
+export HUESHOT_TOOLS="$HERE/usr/share/hueshot"
+export EMSDK="$LIB/emsdk"
+export HUESHOT_SYSROOT="$LIB/sysroot"
+export HUESHOT_FFMPEG="$LIB/ffmpeg"
+export HUESHOT_VK_PREBUILT="$LIB/hueshot_vk.so"
+export HUESHOT_SDL2="$LIB/libSDL2-2.0.so.0"
+# (written into the game folder's hueshot_version.txt, so its launcher finds this builder)
+if [ -n "${APPIMAGE:-}" ]; then
+    export HUESHOT_BUILDER_EXE="$APPIMAGE"
+else
+    export HUESHOT_BUILDER_EXE="$HERE/AppRun"
+fi
+PY="$HERE/usr/python/bin/python3"
+if [ "${1:-}" = "--cli" ]; then
+    shift
+    exec "$PY" -I "$HUESHOT_TOOLS/nx2/make_game.py" "$@"
+fi
+# Play is the same AppImage: the start script drops this image's libraries, then runs the built game.
+if [ "${1:-}" = "--play" ]; then
+    shift
+    exec "$HUESHOT_TOOLS/builder/linux/hueshot-launch" "$@"
+fi
+if [ -n "${1:-}" ] && [ -d "$1" ]; then
+    exec "$HUESHOT_TOOLS/builder/linux/hueshot-launch" "$1"
+fi
+exec "$PY" -I "$HUESHOT_TOOLS/builder/linux/hueshot_builder.py" "$@"

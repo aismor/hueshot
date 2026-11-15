@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Windows installer (MSI) around HueshotBuilder.exe (builder/setup/setup.c), for players whose antivirus or SmartScreen
+     treats a bare downloaded exe with more suspicion than an installer package. Per-user (no administrator rights): it puts the
+     setup in %LOCALAPPDATA%\Programs\Hueshot Builder, adds a Start menu entry and starts the setup when it finishes, which installs
+     or updates the builder as HueshotBuilder.exe does. Uninstalling removes the entry and the setup exe.
+     Built with WiX 5 (MS-RL): wix build -arch x64 -d Version=<x.y.z> -d SetupExe=<path> HueshotBuilder.wxs -o HueshotBuilder.msi -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Hueshot Builder" Manufacturer="Hueshot" Version="$(var.Version)" Scope="perUser"
+           UpgradeCode="{6E1A0C2B-6B2F-4C8E-9D35-2F2B8F0D7A41}" Language="1033" Compressed="yes">
+    <SummaryInformation Description="Hueshot Builder installer" />
+    <MajorUpgrade DowngradeErrorMessage="A newer Hueshot Builder installer is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="HueshotIcon" SourceFile="../setup/hueshot.ico" />
+    <Property Id="ARPPRODUCTICON" Value="HueshotIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/aismor/hueshot" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Hueshot Builder">
+          <Component Id="SetupExe" Guid="{B4A7E0C9-3D61-4F0A-8C2E-5A9D17E3C6F2}">
+            <File Id="SetupExeFile" Source="$(var.SetupExe)" Name="HueshotBuilder.exe" />
+            <RegistryValue Root="HKCU" Key="Software\Hueshot\Builder" Name="Installer" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+            <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+            <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuEntry" Guid="{1F9C2D74-8E35-4B6A-A0D3-7C5E2B91F8A6}">
+        <Shortcut Id="StartMenuShortcut" Name="Hueshot Builder" Description="Build and update Hueshot"
+                  Target="[INSTALLFOLDER]HueshotBuilder.exe" WorkingDirectory="INSTALLFOLDER" Icon="HueshotIcon" />
+        <RegistryValue Root="HKCU" Key="Software\Hueshot\Builder" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Hueshot Builder">
+      <ComponentRef Id="SetupExe" />
+      <ComponentRef Id="StartMenuEntry" />
+    </Feature>
+
+    <!-- (the setup starts once the install is done, as running HueshotBuilder.exe would) -->
+    <CustomAction Id="StartSetup" FileRef="SetupExeFile" ExeCommand="" Return="asyncNoWait" Impersonate="yes" Execute="immediate" />
+    <InstallExecuteSequence>
+      <Custom Action="StartSetup" After="InstallFinalize" Condition="NOT Installed AND NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

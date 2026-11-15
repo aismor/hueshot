@@ -1,0 +1,30 @@
+name: Pipelines
+description: Send a pipeline list Hueshot saved, to remove first-load stutter for everyone
+title: "[Pipelines] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing your pipelines. **Save my pipeline list** (the game's menu, Debug tab, or the builders'
+        launcher page) makes `hueshot-pipelines-<date>.zip` in your Downloads folder and copies the report below.
+
+        - **Attach the zip to this issue** (drag it into this text box, or the comment box after sending).
+        - **Paste the report** into the report box: it has your version, hardware, settings and where you played.
+        - Only send the zip Hueshot made. Never attach game files, keys, saves, `hueshot.exe` or the `.bin` caches.
+  - type: textarea
+    id: report
+    attributes:
+      label: The report
+      description: The report Hueshot copied when it saved the zip (`hueshot_pipeline_report.txt` inside it).
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: The zip holds only Hueshot's pipeline list and report, nothing from the game.
+          required: true
+        - label: I searched the open issues for the same area, GPU and driver.
+          required: true

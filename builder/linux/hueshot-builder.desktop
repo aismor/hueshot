@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Hueshot Builder
+Comment=Builds Ocarina of Time for PC from your own copy of the game
+Exec=AppRun
+Icon=hueshot
+Categories=Game;
+Terminal=false
+Actions=Play;
+
+[Desktop Action Play]
+Name=Play
+Exec=AppRun --play
+Icon=hueshot

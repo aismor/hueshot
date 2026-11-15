@@ -1,0 +1,42 @@
+#!/bin/sh
+# The game folder's launcher, what hueshot.exe is on Windows: Play, and Update when a newer release is out.
+# The game itself is bin/hueshot. This file is copied to hueshot in the folder (nx2/make_game.py).
+#
+# It starts the builder= line in hueshot_version.txt (the builder that made this game), or the installed builder
+# ($XDG_DATA_HOME/hueshot/builder) when that one is gone. With neither, it starts the game.
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+installed() {
+    root=${HUESHOT_BUILDER_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}}/hueshot/builder
+    [ -f "$root/current" ] || return 1
+    tag=$(tr -d ' \r\n' < "$root/current")
+    [ -n "$tag" ] && [ -x "$root/versions/$tag/AppRun" ] || return 1
+    printf '%s\n' "$root/versions/$tag/AppRun"
+}
+
+builder_line() {
+    [ -f "$HERE/hueshot_version.txt" ] || return 1
+    path=
+    while IFS= read -r line || [ -n "$line" ]; do
+        case $line in
+            builder=*) path=${line#builder=} ;;
+        esac
+    done < "$HERE/hueshot_version.txt"
+    [ -n "$path" ] && [ -x "$path" ] || return 1
+    printf '%s\n' "$path"
+}
+
+run=$(builder_line || true)
+if [ -z "$run" ]; then
+    run=$(installed || true)
+fi
+if [ -n "$run" ]; then
+    exec "$run" --launch "$HERE"
+fi
+if [ -x "$HERE/bin/hueshot" ]; then
+    cd "$HERE"
+    exec ./bin/hueshot
+fi
+echo "Hueshot: the game (bin/hueshot) is missing from this folder. Build it again with Hueshot Builder." >&2
+exit 1

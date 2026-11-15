@@ -1,0 +1,44 @@
+# ---- never commit the game or anything made from it ----
+# (decompressed modules, the loaded image, lifted C, test builds, romfs/exefs copies, dumps, keys)
+work/
+gen/
+image/
+exefs/
+romfs/
+*.bin
+*.keys
+*.nso
+*.nca
+*.nsp
+*.xci
+gamefile/
+*.nup
+# scripts/hueshot_bench.py's run folders: game screenshots and the full log
+bench-runs/
+*.nsz
+*.xcz
+
+# ---- build output and caches ----
+build/
+__pycache__/
+*.pyc
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.sha1
+*.log
+
+# ---- Linux builds ----
+build-linux/
+*.so
+
+# ---- NVIDIA's DLSS SDK (scripts/ngx_sdk.py): NVIDIA's files, never committed ----
+ngx-sdk/
+
+# ---- nx2/dev.py compdb: the last build's compile commands, for clangd and clang-tidy ----
+/compile_commands.json
