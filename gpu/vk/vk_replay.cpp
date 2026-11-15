@@ -3063,9 +3063,20 @@ bool readback_wait_value(uint64_t v) {
 bool readback_late_wanted(uint64_t size, bool newest) {
     static const readback_late::Rules rules = [] {
         const char* e = getenv("RX_VK_READBACK_LATE");
-        const readback_late::Rules r = readback_late::parse(e);
-        if (r.any()) logf("vk: readbacks read without their wait: RX_VK_READBACK_LATE=%s (newest %d, %d sizes)", e, (int)r.newest, (int)r.sizes.size());
-        return r;
+        if (e) {
+            if (env_value_off(e) || !strcmp(e, "0")) return readback_late::Rules{};
+            const readback_late::Rules r = readback_late::parse(e);
+            if (r.any()) logf("vk: readbacks read without their wait: RX_VK_READBACK_LATE=%s (newest %d, %d sizes)", e, (int)r.newest,
+                              (int)r.sizes.size());
+            return r;
+        }
+        if (async_on()) {
+            readback_late::Rules r;
+            r.newest = true;
+            logf("vk: readbacks read without their wait: Threaded rendering (newest); RX_VK_READBACK_LATE= overrides");
+            return r;
+        }
+        return readback_late::Rules{};
     }();
     return readback_late::wanted(rules, size, newest);
 }
