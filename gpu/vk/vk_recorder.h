@@ -200,7 +200,10 @@ inline int mode_init() {
             if (atoi(mb) > 0) g_ring_bytes = size_t(std::min(atoi(mb), 1024)) << 20;
         if (const char* s = getenv("RX_VK_RECORDER_STATS")) g_stats_log = atoi(s) != 0;
         if (const char* s = getenv("RX_VK_RECORDER_SPIN_US")) g_spin_ns = (uint64_t)std::max(1, atoi(s)) * 1000;
-        g_own = env_on("RX_VK_RECORDER_OWN");
+        if (const char* o = getenv("RX_VK_RECORDER_OWN"))
+            g_own = env_on("RX_VK_RECORDER_OWN");
+        else
+            g_own = true;   // (the recorder thread: slot resets skip the wait; RX_VK_RECORDER_OWN=0 turns it off)
         const char* idle = getenv("RX_VK_RECORDER_IDLE");
         g_idle_wait = idle && !strcmp(idle, "wait");
     }
