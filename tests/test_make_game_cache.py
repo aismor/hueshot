@@ -40,6 +40,7 @@ class NupCacheTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="hueshot-cache-test-")
         self.addCleanup(self.temporary.cleanup)
+        self.addCleanup(getattr(make_game, "release_work", lambda: None))   # (Windows cannot delete an open lock file)
         self.root = Path(self.temporary.name).resolve()
         self.out = self.root / "output"
         self.work = self.root / "work"

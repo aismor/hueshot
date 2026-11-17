@@ -43,6 +43,8 @@ enum LogLevel : int { log_error, log_warn, log_info, log_debug, log_trace };
 static void logf_at(LogLevel, const char*, ...) {}
 constexpr char network_left_out[] = "a network left out on this card";
 std::atomic<int64_t> st_failed, st_left_out;
+constexpr int64_t kFailNamed = 30;
+std::atomic<int64_t> st_failed_left_out, st_not_translated;
 struct Forced { std::string want; };
 static Forced* forced;
 struct Program { uint64_t key; bool failed; };

@@ -6,7 +6,8 @@ VUID-vkBeginCommandBuffer-commandBuffer-00049), and readback_submit_wait reset a
 (VUID-vkResetFences-pFences-01123). Now the timed-out submission is remembered and waited for first.
 
 When vkAllocateCommandBuffers or vkCreateFence failed, rb_pool stayed set with rb_cmd or rb_fence null: the next call
-skipped the creation and began a null command buffer. Now the pool is destroyed and all three made again next time.
+skipped the creation and began a null command buffer. Now the pool is destroyed and all three made again next time. A
+device-lost wait is recorded separately from a timeout, so no later read-back waits on or reuses that device's objects.
 
 python -I -B tests/test_readback_pending.py
 """
@@ -23,7 +24,7 @@ def body_of(src, head):
 
 def main():
 	tex = (VK / "vk_texture.cpp").read_text(encoding="utf-8")
-	if "bool rb_pending = false;" not in tex:
+	if "bool rb_pending = false, rb_lost = false;" not in tex:
 		raise SystemExit("a timed-out read-back is not remembered")
 	begin = body_of(tex, "bool readback_begin() {")
 	pend = begin.find("if (rb_pending)")
@@ -36,8 +37,10 @@ def main():
 	if "vkDestroyCommandPool(dev.device, rb_pool, nullptr);" not in made or "rb_pool = VK_NULL_HANDLE" not in made:
 		raise SystemExit("a read-back pool whose command buffer or fence failed is kept half made")
 	submit = body_of(tex, "bool readback_submit_wait() {")
-	if "rb_pending = vkWaitForFences(" not in submit:
+	if "const VkResult r = vkWaitForFences(" not in submit or "rb_pending = r == VK_TIMEOUT" not in submit:
 		raise SystemExit("readback_submit_wait does not note a wait that timed out")
+	if "rb_lost = r != VK_SUCCESS && r != VK_TIMEOUT" not in submit:
+		raise SystemExit("readback_submit_wait treats a device-lost wait as a reusable timeout")
 	print("the read-back command buffer is never reused while pending, nor used half made")
 
 

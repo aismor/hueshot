@@ -47,6 +47,17 @@ inline uint64_t returnable(uint64_t block_bytes, uint64_t free_bytes, uint64_t k
 /// the driver's count: the rule that squeezes by the count alone (97% of the allowance) waits, as it does for room in the blocks
 inline bool kept_only(uint64_t block_bytes, uint64_t kept) { return kept && block_bytes <= kept; }
 
+/// An allowance the driver gives as the count itself, within kAtCount, is past: AMD's Windows driver reports a
+/// process over what it allows as allowed exactly what it uses. Taken literally, every rule sees the count within
+/// the allowance while the driver pages. Make it a tenth lower so the rules give memory back until the driver again
+/// reports an allowance above the count. An allowance already below the count, or 0 (unknown), stays as it is.
+inline constexpr uint64_t kAtCount = 16ull << 20;
+inline constexpr uint64_t kPastShare = 10;
+inline uint64_t past_allowance(uint64_t used, uint64_t allowed) {
+    if (!allowed || allowed + kAtCount < used || allowed > used + kAtCount) return allowed;
+    return used - used / kPastShare;
+}
+
 /// The presents between the end of a run and the next look
 inline uint64_t rest(bool is_pressed) { return is_pressed ? 120 : 600; }
 

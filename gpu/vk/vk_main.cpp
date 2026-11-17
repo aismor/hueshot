@@ -79,6 +79,8 @@ void load_device(VkDevice device) {
 
 namespace mkwvk {
 
+bool predicted_complete();   // vk_draw.cpp: completion of explicit All preparation, including zero keys
+
 int display_refresh_mhz();   // (below, outside the unnamed namespace)
 
 std::vector<std::string> gpu_device_names;
@@ -1315,7 +1317,8 @@ bool started_up() {
         part = 0;
         const bool prepared = prepare_run(progress, false, true);
         // (or the last run did not finish the prediction; Compile shaders on Most: never, compile_all)
-        const bool predict = (prepared || predict_pending()) && compile_all();
+        // An explicit All request also upgrades a folder prepared on Most. Completed All work stays skipped.
+        const bool predict = compile_all() && (prepared || predict_pending() || !predicted_complete());
         if (!prepared && !bar.counted[0]) bar.skip(0);   // (an already prepared seed can still import pipeline states)
         // (no prediction: its part of the bar goes. On Most after a preparation too: left in, the step to the noted pipelines
         // counted it done at its guess, and the bar jumped by the prediction's share, about half of it)
@@ -1454,15 +1457,17 @@ void auto_profile() {
     hw.integrated = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
     for (uint32_t i = 0; i < dev.memory.memoryHeapCount; i++)
         if (dev.memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-            hw.vram_mb = std::max<uint32_t>(hw.vram_mb, (uint32_t)(dev.memory.memoryHeaps[i].size >> 20));
+            hw.vram_mb = std::max<uint32_t>(hw.vram_mb, (uint32_t)(test_vram_bytes(dev.memory.memoryHeaps[i].size) >> 20));
     hw.mesh_native = dev.mesh_capable;   // (the card's, not this run's mode: Linux AMD's Automatic is Compute, #2245)
     hw.mesh_as_compute = dev.mesh_capable && !dev.mesh_shader;
     hw.rtx = hw.vendor == ::auto_settings::NVIDIA && strstr(p.deviceName, "RTX");
     // (RDNA 4: "AMD Radeon RX 9070 XT", RADV's "(RADV GFX1201)")
     hw.rdna4 = hw.vendor == ::auto_settings::AMD && (strstr(p.deviceName, "RX 9") || strstr(p.deviceName, "GFX12"));
-    // (the Steam Deck's APU, LCD and OLED, or SteamOS's own flag)
+    // (the Steam Deck's APU, LCD and OLED, or Steam's flag on an integrated GPU: Steam sets SteamDeck=1 wherever it runs as on a
+    // Deck, Gaming Mode sessions on desktops with a discrete card too, which are no handheld)
     const char* deck = getenv("SteamDeck");
-    hw.handheld = (deck && atoi(deck) == 1) || strstr(p.deviceName, "Custom GPU 0405") || strstr(p.deviceName, "Custom GPU 0932");
+    hw.handheld = (deck && atoi(deck) == 1 && hw.integrated) || strstr(p.deviceName, "Custom GPU 0405") ||
+                  strstr(p.deviceName, "Custom GPU 0932");
     hw.dlss_built = dlss_built();
     hw.fsr4_built = fsr4_built();
     hw.threads = (int)std::thread::hardware_concurrency();

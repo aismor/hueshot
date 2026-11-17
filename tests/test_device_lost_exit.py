@@ -77,7 +77,11 @@ def main():
     sites = [line.strip() for line in replay.splitlines() if "VK_ERROR_DEVICE_LOST" in line and "if (" in line]
     if len(sites) < 4:
         raise SystemExit("FAIL: fewer VK_ERROR_DEVICE_LOST checks than the four known: update this test")
-    stray = [s for s in sites if not re.search(r"== VK_ERROR_DEVICE_LOST\) device_lost\(\);", s)]
+    # Timeline waits diagnose device loss but leave the existing submit/hang-watch path to end the process. They must
+    # not be mistaken for the Vulkan calls whose failure handling is responsible for terminating immediately.
+    diagnostic = ("wait_rec_result == VK_ERROR_DEVICE_LOST", "res == VK_ERROR_DEVICE_LOST) wait_lost(")
+    stray = [s for s in sites if not any(d in s for d in diagnostic) and
+             not re.search(r"== VK_ERROR_DEVICE_LOST\) device_lost\(\);", s)]
     if stray:
         raise SystemExit("FAIL: a device lost that does not end the process: " + "; ".join(stray))
     # (the report is logf lines, which the host queues on Windows: replay_fatal writes the queue out before _Exit)

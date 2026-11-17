@@ -93,17 +93,20 @@ static uint64_t completed() { return done_value; }
 static int waited_whole_value;   // (readback_wait_value: the main timeline, every queue's work)
 static bool replay_behind() { return false; }
 static void wait_queue_empty() {}
+static void readback_fell_back(int = 0) {}
 static bool readback_wait_value(uint64_t) { waited_whole_value++; return true; }
-static const bool by_part = true, unforced = true;
+static const bool by_part = true, unforced = true, behind = false;
 static uint64_t in_place_part;   // (the newest part that reads guest memory in place, as vk_memory.cpp keeps it)
 static uint64_t memory_in_place_part() { return in_place_part; }
 static int held_back;
+static int in_place;
 /// what a readback of [guest, guest + size) waits for: the recording (0: none)
 static uint64_t readback(uint64_t guest, uint64_t size) {
     bool w = false;
     waited_seq = 0;
     uint64_t part = 0, whole = 0;
     const uint64_t v = memory_writeback_value(guest, size, nullptr, &part, &whole);
+    const bool pending = v > completed(), late = false;
     /* CHOICE */
     (void)w;
     return waited_seq;
@@ -166,8 +169,10 @@ int main() {
     note(d, 4);
     rec_open_values.push_back(11);
     note(e, 5);
+    in_place = 0;
     check(readback(3 * P, 64) == 5, "a range written in place waits for its submission's last part");
     check(readback(3 * P, 2 * P) == 5, "and so does a range with a page written in place and one written back from a mirror");
+    check(in_place == 1, "the readback line counts only the range written in place as a whole-submission wait");
     check(readback(4 * P, 64) == 4, "the mirror's page alone waits for its part");
     // a page written back from a mirror, then written in place by a later submission: the part is gone with the value
     wb_pages_note(1 * P, 2 * P, 12, 0);
@@ -201,11 +206,12 @@ int main() {
     // a part after the range's own reads guest memory in place (a pool with no mirror, a mirror's pages from no capture):
     // the game, let go after the range's part, would write what that part still reads. The last part, as before
     done_value = 10;
-    held_back = 0;
+    held_back = 0, in_place = 0;
     in_place_part = 4;
     check(readback(4 * P, 64) == 4 && held_back == 0, "guest memory read in place in the range's own part: that part is enough");
     in_place_part = 5;
     check(readback(4 * P, 64) == 5 && held_back == 1, "guest memory read in place in a later part: the submission's last part");
+    check(in_place == 0, "a range with a part of its own is not counted as a whole-submission wait");
     in_place_part = 0;
 
     // the look at the stopped queues: only after a CPU signal nobody has looked at
@@ -271,7 +277,7 @@ def main():
     inv = replay[replay.index("void invalidate(uint64_t gpu, uint64_t size) {"):]
     lookup = "const uint64_t v = memory_writeback_value(host->gpu_guest(gpu), size, nullptr, &part, &whole);"
     after = inv[inv.index(lookup):]
-    choice = block(after, "if (v > completed()) {\n                int ok = 0;")
+    choice = block(after, "if (pending && !late) {")
     assert "wait_recorded_part(part" in choice, "the readback no longer waits for its pages' part: update this test"
     # (the settle before the lookup goes through sync_settle_met with per-queue fences)
     before = inv[:inv.index(lookup)]
@@ -283,6 +289,9 @@ def main():
         "update_blocked no longer says whether a stopped queue waits on an event in guest memory"
     assert "const bool in_place_after = memory_in_place_part() > part;" in choice and "!in_place_after &&" in choice, \
         "the readback's part wait no longer gives way to guest memory read in place after its part"
+    assert "if (!parted && !part) in_place++;" in choice and \
+           "(long long)held_back.exchange(0), (long long)in_place.exchange(0));" in replay, \
+        "the readback line no longer counts waits for whole submissions whose pages were written in place"
     memory_src = memory
     # every place the guest pool's own buffer is handed to the GPU to read: bound, copied from, or given out whole
     # (gpu_buffer: a texture unswizzled on the GPU, a texel buffer's view). The write-back's own copies into it, the

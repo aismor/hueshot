@@ -29,6 +29,7 @@ class PrepareTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
+        self.addCleanup(getattr(make_game, "release_work", lambda: None))   # (Windows cannot delete an open lock file)
         self.nup = os.path.join(self.dir.name, "game.nup")
         Path(self.nup).write_bytes(b"")
 
@@ -104,6 +105,7 @@ class LanguageTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
+        self.addCleanup(getattr(make_game, "release_work", lambda: None))   # (Windows cannot delete an open lock file)
         self.addCleanup(setattr, make_game, "PREPARE", False)
         self.out = os.path.join(self.dir.name, "Hueshot")
         os.mkdir(self.out)

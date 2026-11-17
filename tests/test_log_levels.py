@@ -134,9 +134,10 @@ def main():
         if r.returncode:
             raise SystemExit("FAIL: the log's levels")
     # (the shader's catch: the network left out is told apart from a failure, at trace, on a count of its own)
-    catch = shader[shader.index("static std::atomic<int> logged, left_out;"):]
+    catch = shader[shader.index("// (a network left out on purpose is a trace line, counted apart"):]
     catch = catch[:catch.index("st_translate_ns")]
-    if "strcmp(e.what(), network_left_out)" not in catch or "!trial && left_out++ < 30) logf_at(log_trace" not in catch:
+    if "strcmp(e.what(), network_left_out)" not in catch or \
+            "!trial && st_failed_left_out++ < kFailNamed" not in catch or "logf_at(log_trace" not in catch:
         raise SystemExit("FAIL: a network left out is not a trace line counted apart")
     # (Hueshot throws it as LeftOut, which a catch of its own counts apart (st_left_out) and says once; its text is the same
     # as network_left_out, so the generic catch's comparison still tells it apart where it lands there)

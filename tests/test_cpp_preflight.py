@@ -55,6 +55,7 @@ class CppPreflightTests(unittest.TestCase):
             self.fail("Run this check as a script with --cxx (and, on Windows, a configured developer environment)")
         self.temporary = tempfile.TemporaryDirectory(prefix="hueshot-cpp-preflight-")
         self.addCleanup(self.temporary.cleanup)
+        self.addCleanup(getattr(make_game, "release_work", lambda: None))   # (Windows cannot delete an open lock file)
         self.root = Path(self.temporary.name).resolve()
         self.addCleanup(self.assert_owned_fixture)
         self.toolchain = Toolchain(COMPILER, COMPILER_FLAGS)

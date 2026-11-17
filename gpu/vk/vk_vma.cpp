@@ -8,6 +8,8 @@
 #include <vk_mem_alloc.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -91,7 +93,8 @@ static size_t blocks_at_start(bool holds_textures) {
     if (!holds_textures) return 0;
     uint64_t heap = 0;
     for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
-        if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) heap = std::max<uint64_t>(heap, dev.memory.memoryHeaps[h].size);
+        if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            heap = std::max<uint64_t>(heap, test_vram_bytes(dev.memory.memoryHeaps[h].size));
     if (const char* e = getenv("RX_VK_IMAGE_PREALLOC")) return (size_t)std::max(0, atoi(e));
     return (size_t)vram_compact::blocks_at_start(heap, kImageBlock, holds_textures);
 }
@@ -374,6 +377,46 @@ bool vram_usage(uint64_t* used, uint64_t* budget, uint64_t* block_free) {
     // keep-rendered paths an 8 GB card takes when its VRAM fills (the rainbow textures of issue 993 were never seen here otherwise))
     static const uint64_t test_allowed = getenv("RX_VK_TEST_ALLOWED_MB") ? (uint64_t)atoi(getenv("RX_VK_TEST_ALLOWED_MB")) << 20 : 0;
     if (test_allowed && t > test_allowed) t = test_allowed;
+    // RX_VK_TEST_ALLOWED_FILE=<file>: the same diagnostic bound, read again once a second so it can shrink in play.
+    static const char* test_file = getenv("RX_VK_TEST_ALLOWED_FILE");
+    if (test_file) {
+        static std::atomic<uint64_t> file_allowed{0};
+        static std::atomic<int64_t> read_at{0};
+        const int64_t now = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (now - read_at.load(std::memory_order_relaxed) >= 1000) {
+            read_at.store(now, std::memory_order_relaxed);
+            uint64_t mb = 0;
+            if (FILE* fp = fopen(test_file, "r")) {
+                unsigned long long v = 0;
+                if (fscanf(fp, "%llu", &v) == 1) mb = v;
+                fclose(fp);
+            }
+            if ((mb << 20) != file_allowed.load(std::memory_order_relaxed))
+                logf("vk: test allowance (RX_VK_TEST_ALLOWED_FILE): %llu MB%s", (unsigned long long)mb,
+                     mb ? "" : " (the driver's)");
+            file_allowed.store(mb << 20, std::memory_order_relaxed);
+        }
+        const uint64_t fa = file_allowed.load(std::memory_order_relaxed);
+        if (fa && t > fa) t = fa;
+    }
+    // Report a test allowance as the count after it is crossed, as AMD's Windows driver does.
+    static const bool test_follow = env_on("RX_VK_TEST_ALLOWED_FOLLOW");
+    if (test_follow && (test_allowed || test_file) && t && u > t) t = u;
+    // An allowance reported as the count itself is past it, not room still available.
+    static const bool at_count_rule = [] {
+        const char* e = getenv("RX_VK_ALLOWED_AT_COUNT");
+        return !e || !env_value_off(e);
+    }();
+    if (at_count_rule) {
+        const uint64_t was = t;
+        t = vram_compact::past_allowance(u, t);
+        static std::atomic<int> told{0};
+        if (t != was && told.fetch_add(1, std::memory_order_relaxed) < 8)
+            logf("vk: the driver's allowance is the count itself (%llu MB used of %llu): past it, taken as %llu MB "
+                 "(RX_VK_ALLOWED_AT_COUNT=0: as the driver says)", (unsigned long long)(u >> 20),
+                 (unsigned long long)(was >> 20), (unsigned long long)(t >> 20));
+    }
     *used = u, *budget = t;
     if (block_free) *block_free = f;
     return t != 0;

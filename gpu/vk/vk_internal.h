@@ -339,6 +339,8 @@ bool create_device_buffer(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
 /// device-local heaps; false when unknown
 bool vram_usage(uint64_t* used, uint64_t* budget, uint64_t* block_free = nullptr);
 uint64_t device_vram_bytes();   // (device-local heap size; vk_memory.cpp)
+/// RX_VK_TEST_VRAM_MB=<n>: take the card's VRAM as at most n MiB wherever policy is sized by it.
+uint64_t test_vram_bytes(uint64_t heap);
 /// vram_usage asked of the driver now (VMA asks again for a new frame index), for the status line; false when the driver
 /// gives no budget (VK_EXT_memory_budget): used is then the game's own allocations
 bool vram_usage_now(uint64_t* used, uint64_t* budget);

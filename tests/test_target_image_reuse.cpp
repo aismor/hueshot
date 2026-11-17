@@ -20,7 +20,7 @@ struct Device {
     VkDevice device = reinterpret_cast<VkDevice>(1);
 };
 Device dev;
-uint64_t frame_no = 0, total_bytes = 0, destroy_gen = 0;
+uint64_t frame_no = 0, completed_value = 0, total_bytes = 0, destroy_gen = 0;
 int destroyed_images = 0, destroyed_views = 0;
 void destroy_image(VkImage, VmaAllocation) {
     destroyed_images++;
