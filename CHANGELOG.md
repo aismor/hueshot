@@ -1,12 +1,14 @@
 # Changelog
 
-## Unreleased
+## [0.0.3](https://github.com/aismor/hueshot/releases/tag/v0.0.3) (2026-11-17)
 
 ### Features
 
 * **vk:** selectable CRT monitor and TV filters, ported from Longshot: **CRT filter** (Off, Lottes aperture grille, Lottes consumer TV, Hyllian Fast, zfast CRT) and **CRT lines** (240, 480 or 720 virtual lines), both live and preset-exempt (`crt_filter=`, `crt_lines=`); **CRT lines** is shown only while a filter is chosen, and its saved value returns with the row. The finished SDR picture, HUD included, is box-downsampled to the virtual raster and filtered after window scaling; Hueshot's menu and overlays stay clean, Native HDR (PQ) bypasses it, and Off allocates nothing. Shader sources and licences are in `third_party/crt_shaders/`.
 
 ### Performance Improvements
+
+* **vk:** ASTC opacity checks now scan the cached guest/source bytes while copying to the staging buffer instead of rereading uncached host-visible VRAM. On Hyrule Field this removed the 17–30 ms ASTC upload scans: slow uploads fell from 13 to 2 and frames over 20 ms from 0.2% to 0% in the controlled 30-second comparison.
 
 * **host:** character shadow maps reserve stepped storage (`HOS_SHADOW_BUCKET`, 384 by default), reducing transient render-target address churn.
 * **vk:** finalized ASTC textures can supply identical textures made at new addresses by image copy instead of another decode (`RX_VK_ASTC_REUSE=1`; off by default while its in-game test is investigated).

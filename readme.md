@@ -60,8 +60,8 @@ what does not yet. Open problems are collected in tracking issues, linked below.
 | Flicker (the picture flashing too bright while moving) | ✅ Fixed in v2.0.2 (#645) |
 | Ground fog vanishing when looking down | ✅ Fixed in v2.0.2 (#638) |
 | Models with missing pieces (doors, fences, parts of trees) | ✅ Fixed where tested, more play needed |
-| Stutter when entering new areas | ⚠️ Still happens the first time you visit a place. The next visits are smooth |
-| Performance | ⚠️ Depends on the PC: some reach a steady 60 fps, others stay below it, more so in Hyrule Field |
+| Stutter when entering new areas | ⚠️ First visits still load assets, but the recurring ASTC upload stall was fixed in v0.0.3 |
+| Performance | ⚠️ Depends on the PC: some reach a steady 60 fps, others stay below it, more so in Hyrule Field; v0.0.3 reduces camera-turn stutters on tested NVIDIA hardware |
 | Hyrule Field, Castle Town, Kakariko and the dungeons | ⚠️ Players got there, with open bugs: lighting and shadows (#1004), crashes and freezes (#2507) |
 | Ultrawide and 4:3 | ✅ Works. The Aspect ratio row's default, Monitor's shape, widens the 3D to the screen and keeps the HUD and movies in the middle 16:9 ([#2119](https://git.notrexed.dev/Hookshot/Hookshot/commit/145eed2650d9d2cebad85a8a0052d302086015c7)) |
 | NVIDIA cards | ✅ Works. The most tested |
