@@ -219,10 +219,15 @@ Pipeline-cache file ownership, temporary storage and failure behavior are descri
 | `RX_VK_COMPACT=0`, `RX_VK_COMPACT_PCT=<50..90>`, `RX_VK_COMPACT_MB=<MB>` | VRAM compaction (on by default; `=0` turns it off): the textures that are not render targets in a pool of their own, moved out of sparsely used blocks a few a present so that the blocks go back to the driver, and the texture budget holding the driver's count at that share of what it allows (85) by letting go of the render targets drawn over since and of textures unused for ten seconds, with a reserve five points under it (80) where those unused for thirty seconds go (what the budget's size, the 90% rule and the driver's limit ask for on their own still goes from textures unused for a second, as with it off); the free space that starts a run (512; 192 while the count is over 90%) |
 | `RX_VK_EVICT_EXCESS=0` | The 90% rule and the driver's limit cut the texture cache to 7/8 of their budget again, as before; by default they let go of their excess and 64 MB more (`vram_compact::rule_target`), so a cache a few MB over the line does not lose an eighth of its textures |
 | `RX_VK_IMAGE_PREALLOC=<blocks>` | Initial 128 MiB image blocks: by default 15% of the real device-local heap, from 2 to 24 blocks (9 on an 8 GiB card); `0` makes them only as needed. They belong to the sampled-texture pool, or the images' pool with `RX_VK_COMPACT=0`, never both. A failed initial allocation retries with no initial blocks. VMA keeps these blocks even when empty: compaction counts only space it can return, and the 97% squeeze waits while only kept texture blocks remain. This avoids charging an unused utility-image pool against the texture budget (#2690); it does not lower the driver's actual memory count in a scene with few textures |
-| `RX_VK_TEST_ALLOWED_MB=<MiB>` | Diagnostic upper bound on the allowance reported to the renderer's eviction policy; does not reduce the real heap or emulate OS paging. To model #2690 on a larger card use `7000` with `RX_VK_IMAGE_PREALLOC=9`, since the automatic initial-block count still follows the real heap. Other heap-based defaults, including the mirror budget, also remain real-card defaults unless explicitly overridden |
+| `RX_VK_TEST_ALLOWED_MB=<MiB>` | Diagnostic upper bound on the allowance reported to the renderer's eviction policy; does not reduce the real heap or emulate OS paging. Combine with `RX_VK_TEST_VRAM_MB` to run a smaller card's whole policy |
+| `RX_VK_TEST_VRAM_MB=<MiB>` | Diagnostic cap on the card's VRAM wherever renderer policy is sized by it: starting texture blocks, mirror budget, texture budget and automatic settings. Does not reduce the real heap or emulate paging |
+| `RX_VK_TEST_ALLOWED_FILE=<file>` | The same diagnostic bound, read from the number of MiB in that file once a second, so a run can shrink the allowance in play. A missing file or `0` leaves the driver's allowance |
+| `RX_VK_TEST_ALLOWED_FOLLOW=1` | With either test bound, report the allowance as the count once the count passes it, as AMD's Windows driver does. Diagnostic only |
+| `RX_VK_ALLOWED_AT_COUNT=0` | Take an allowance equal to the count (within 16 MiB) literally. By default it is treated as already past: the VRAM rules use a tenth under the count and give memory back until the driver reports an allowance above it again |
 | `RX_VK_REACTIVE=1`, `RX_VK_REACTIVE_SCALE=<0..64>`, `RX_VK_REACTIVE_MAX=<0..1>`, `RX_VK_REACTIVE_DEBUG=1` | A reactive mask for DLSS and FSR 3.1 only, not FSR 4 (`gpu/vk/vk_reactive.h`, off by default: not yet checked in the game): the scene's colour is copied before its blended draws that test depth without writing it (water, smoke, fire, glows), and where the scene differs from the copy at the upscale the upscaler leans on the current frame, so they smear and ghost less. The mask is the difference times the scale (1), at most the maximum (0.9); the debug switch shows it in the picture in magenta. The mask is the whole difference since the copy, so a blended draw after the last transparent run (a full-screen fade) is in it too. The log's `vk: reactive mask:` lines say whether one is made |
 | `RX_VK_NO_DRAWN_WRITEBACK=1` | Small mip-chained textures the GPU drew are not written into guest memory a few frames later (where that memory is still zero, or still their own last write-back), as before: Ocarina of Time's ground garbles after some minutes in one area (its copies of drawn terrain tiles are all zero) |
 | `RX_VK_NO_DRAWN_PAGE_MAP=1` | A texture in a virtual pool that the GPU writes before anything uploads it has no page map noted at that write, as before: once the game has finalized it, its next check takes all of its storage for remapped and uploads it whole from guest memory over what the GPU drew (Ocarina of Time's HUD button labels go blank after a zone change) |
+| `RX_VK_ASTC_CPU=1` or `0` | ASTC textures decoded on the CPU as RGBA8, or by the GPU decoder (with large textures re-encoded as BC3/BC7). Unset: CPU on Windows for the 2-CU graphics in AMD's Ryzen 7000 and 9000 desktop CPUs, where one large decode submission can reset the GPU; GPU elsewhere |
 | `RX_VK_SKIP_COMPRESSED_OVER_RT=1` | A compressed (ASTC, BC, ETC2/EAC) texture made over storage render targets used is not uploaded, as before: bosses and new enemies all blue the first time |
 | `RX_VK_NO_WRITEBACK` (set) | GPU writes to mirrored pools are not copied back to guest memory (an experiment, for A/B) |
 | `RX_VK_WB_DIFF=0` | Write-backs copy every byte again instead of only what changed against a VRAM shadow (the diff is on by default; v2.0.9 and v2.0.10 had it off, issue 1161) |
@@ -243,6 +248,10 @@ Pipeline-cache file ownership, temporary storage and failure behavior are descri
 | `RX_VK_NAN_GUARD=0` | No NaN guard on float colour outputs (on by default on every card: one NaN texel spreads through bloom into glowing blocks) |
 | `RX_VK_FIFO=1`, `RX_VK_IMMEDIATE=1` | V-Sync On (FIFO) or Off (immediate) for one run, over the menu's V-Sync row |
 | `HOS_VCORES=0`, `HOS_CORES=<1..8>`, `HOS_RESERVE_CORE=0` | No virtual cores; the cores the game sees (6); no core kept for the replay (one is, with 8 or more logical processors) |
+| `HOS_NATIVE_ZSTD=0/1/2`, `HOS_NATIVE_ZSTD_FRAMES=0` | The game's zstd decodes on the host's libzstd 1.5.7 (`host/hos_zstd.c`), both on by default: `HOS_NATIVE_ZSTD` the stream decode (unset or 1 gives the virtual core up while it decodes, 2 keeps it, 0 runs the lifted decoder), `HOS_NATIVE_ZSTD_FRAMES` the resource loaders' whole-buffer decode (0: lifted). The log names each path once |
+| `HOS_SHADOW_BUCKET=<step>` | Character shadow maps reserve storage at stepped sides (384 by default), keeping later render targets at stable addresses as shadows resize. `0`: each map's exact storage, as before |
+| `RX_VK_ASTC_REUSE=1` | Off by default. A texture whose blocks and image shape match one finalized by the game copies its decoded image and retires the old texture at the next present, instead of a new decode. Off, no blocks are hashed. Its first in-game test (the copies firing at 2560x1440) wedged the GPU and the desktop, so it stays opt-in until that is understood |
+| `RX_VK_DEAD_EVERY=<presents>`, `RX_VK_DEAD_MIN_UNUSED=<presents>`, `RX_VK_POOL_IDLE=<presents>` | Dead transient targets are checked every present by default after one unused present; pooled target images wait 8 presents by default. `RX_VK_DEAD_TARGETS=0` disables the frequent dead-target sweep |
 
 ### Building
 
@@ -252,7 +261,7 @@ A build reads and writes tens of gigabytes. When the game folder or the build fi
 | Switch | What it does |
 |---|---|
 | `HUESHOT_JOBS=<n>` (or `--jobs`) | Compilers at once (default one per CPU thread, each started when the free memory holds it; `HUESHOT_MEM_GATE=0` turns that check off) |
-| `HUESHOT_LIFT_JOBS=<n>` | Processes that write the lifted C and make its edits (default the cores, at most 16, one per 2 GB free) |
+| `HUESHOT_LIFT_JOBS=<n>` | Processes that write the lifted C and make its edits (default the cores, at most 16, one per 2 GB free; on Windows, where they start as new processes, one per 0.75 GB free) |
 | `HUESHOT_KEEP_BUILD_FILES=1` | Keeps the lifted C and the objects after a build, so that the next one compiles only what changed |
 | `HUESHOT_FORCE_PROMPTS=1` | Regenerates button-prompt assets even when unchanged. Unset, empty, `0`, `false`, `off` and `no` (case-insensitive, surrounding spaces ignored) are off |
 | `HUESHOT_MINGW=<dir>`, `HUESHOT_MSVC=1` | The llvm-mingw to build with; the Visual Studio route instead |
@@ -494,6 +503,8 @@ number is not the obvious one:
 | `resolution` | 0 Auto, 1 100%, 2 75%, 3 67%, 4 50% |
 | `output_res` | A size, `<width>x<height>`: 2048x1152 (the game's own), one of the screen's display modes (the menu's Aspect ratio and Output resolution rows), or any other with each side a multiple of 8 (rounded down), at least 640x360, at most 5120x2880's pixels, 5:4 to 48:9; anything else is the game's own. A size more than 1 % off 16:9 sets the picture's shape (`host/hos_wide_size.h` `hos_output_own_shape`). The Aspect ratio row saves `ultrawide=` 1 for the monitor's own shape, else 0; another shape is `output_res`'s own. The numbers saved before (0 2048x1152, 1 2560x1440, 2 3840x2160, 3 1920x1080, 4 5120x1440, 5 5120x2880) are still read |
 | `upscaling` | 0 Off, 1 Catmull-Rom, 2 Lanczos |
+| `crt_filter` | 0 Off (default), 1 Lottes aperture grille, 2 Lottes consumer TV, 3 Hyllian Fast, 4 zfast CRT |
+| `crt_lines` | 0 240 virtual lines (default), 1 480, 2 720; capped at half the destination height, at least one line |
 | `sharpness`, `rumble_strength`, `motion_sensitivity_x`, `motion_sensitivity_y` | percent |
 | `mouse_sensitivity` | hundredths: 100 is 1.00 |
 | `field_of_view` | 50 to 150 percent of the current vertical gameplay FOV; 100 is the original. Applies immediately, before projection and culling. The resulting vertical angle stays within 5 to 140 degrees |
@@ -512,6 +523,40 @@ The other rows are 0 Off and 1 On. Some are read at the start, before the menu e
 through (inputs timed in frames, screenshots, waits for the game's state, the Insert menu's settings, quit), with
 `scripts/hueshot_ctl.py` as its client. Off unless set; see [control.md](control.md).
 
+### CRT output stage
+
+The Graphics tab's **CRT filter** and **CRT lines** rows follow Window scaling filter. Both are live, preset-exempt
+options in `gpu/vk/vk_menu.h`; the usual row-name key generation, read-time clamp and save path handle `crt_filter`
+and `crt_lines`, so neither needs a switch, a host/renderer API field or a restart. Missing keys keep Off/240. **CRT
+lines** is shown only with a CRT filter chosen (`row_shown` hides it while the filter is Off, as HDR's levels are hidden
+with HDR off); its saved value stays and returns with the row.
+
+The stage takes the finished SDR picture after window scaling, sharpness and ultrawide-side treatment, on each
+displayed frame after frame generation. It downsamples to a virtual raster (`gpu/vk/shaders/crt_downsample.comp`, an
+exact area box over the source texels), then applies the selected CRT shader at the destination size
+(`crt_lottes.comp`, `crt_hyllian.comp`, `crt_zfast.comp`, all 8x8 compute dispatches with a 36-byte push constant).
+The game's HUD is already in that picture; Hueshot's menu, FPS counter and other overlays are drawn afterwards, so they
+stay sharp. Returning to Off allocates no CRT image and records no dispatch.
+
+When the checked source rectangle is larger than the destination, the box downsample does the shrinking; the window
+effect pass is not run for it (Hueshot has no separate shrink pass). With CRT Off, the direct linear copy is unchanged.
+Native HDR still uses the 10-bit scaling pass and skips CRT.
+
+The requested virtual height is 240, 480 or 720, capped at `max(1, destination_height / 2)` using integer division
+(`gpu/vk/crt_policy.h`); the virtual width follows the destination aspect. This does not change Render resolution,
+force 4:3, or introduce integer scaling. Destination-pixel masks and non-integer raster scaling can show moire; the cap
+limits scanline undersampling but does not make every output size regular. Lottes' flat aperture-grille setting is a
+PVM-style look, not calibration to a particular Sony model; its consumer-TV setting uses curvature and the TV shadow
+mask. Hyllian Fast and zfast CRT are the small upstream algorithms, not their larger multipass relatives.
+
+These filters expect SDR. Expanded HDR runs after CRT through the existing HDR expansion. An actual Native HDR PQ
+picture bypasses CRT without changing the saved selection; it is never processed as sRGB. Native-HDR CRT presets,
+composite/NTSC simulation, phosphor persistence, bezels and downloaded presets are not supported. The imported shader
+sources, their pinned hashes and licences are in `third_party/crt_shaders/`; the compute adapters and their generated
+headers were ported from Longshot `08abc00e`. `scripts/crt_shaders.py` regenerates the headers with glslang, and
+`tests/test_crt_options.py`, `tests/test_crt_policy.py`, `tests/test_crt_shaders.py` and
+`tests/upscale_independent_test.cpp` cover the rows, the policy, the wiring and the shader/source contracts.
+
 ## Layout
 
 | Path | What |
@@ -524,7 +569,7 @@ through (inputs timed in frames, screenshots, waits for the game's state, the In
 | `builder/` | Hueshot Builder: the Windows app (.NET 8 WPF), its setup and MSI, and the Linux builder and launcher scripts |
 | `scripts/` | test runs, the profile and log readers, the save copier (`oot_saves.py`), release tooling, `scripts/linux` (dependencies, AppImage) |
 | `tests/` | the game-free checks, all run by `tests/run_all.py` |
-| `third_party/` | a64-kit (Hueshot's few changes marked `(hueshot)`), libopus, zbic (Atmosphere's zstd with ZBIC, for unpacking only), SDL2's licence, Dear ImGui and its Vulkan backend, zstd's decoder, the Libertinus fonts |
+| `third_party/` | a64-kit (Hueshot's few changes marked `(hueshot)`), libopus, zbic (Atmosphere's zstd with ZBIC, for unpacking only), SDL2's licence, Dear ImGui and its Vulkan backend, zstd's decoder, the CRT shaders' pinned sources, the Libertinus fonts |
 
 License: GPL-3.0-or-later, as mkw-recomp: a64-kit's translator is suyu's (GPL-2.0-or-later) and Eden's code is
 GPL-3.0.

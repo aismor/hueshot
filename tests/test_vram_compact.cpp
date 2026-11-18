@@ -118,6 +118,14 @@ int main() {
     CHECK(!hold_met(5600 * MB, 100 * MB, 400 * MB, 5000 * MB));   // (100 MB still to go)
     CHECK(hold_met(5600 * MB, 200 * MB, 400 * MB, 5000 * MB));
     CHECK(hold_met(300 * MB, 200 * MB, 200 * MB, 0));             // (more chosen than the textures hold, their sum having drifted)
+    // An allowance reported as the count itself is already past on AMD's Windows driver: use a tenth under the count.
+    CHECK(past_allowance(5940 * MB, 5940 * MB) == 5940 * MB - 5940 * MB / 10);
+    CHECK(past_allowance(6600 * MB, 6600 * MB + 8 * MB) < 6600 * MB);
+    CHECK(past_allowance(6600 * MB + 8 * MB, 6600 * MB) < 6600 * MB);
+    CHECK(past_allowance(5300 * MB, 6500 * MB) == 6500 * MB);
+    CHECK(past_allowance(7602 * MB, 6982 * MB) == 6982 * MB);
+    CHECK(past_allowance(5000 * MB, 0) == 0);
+    CHECK(past_allowance(0, 0) == 0);
     std::printf("PASS: the compaction's rules\n");
     return 0;
 }

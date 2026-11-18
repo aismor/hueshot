@@ -12,8 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def check_source():
     """The texture setup still asks the rule, and the switch that overrides it is still read"""
     src = (ROOT / "gpu/vk/vk_texture.cpp").read_text(encoding="utf-8")
-    for needle in ('#include "astc_bc_policy.h"', "astc_bc_policy::all_by_vram(allowed)", 'getenv("RX_VK_ASTC_BC_ALL")',
-                   "(bw * bh >= 36 || all) ? low : 64ull << 20"):
+    for needle in ('#include "astc_bc_policy.h"', "astc_bc_policy::all(allowed, integrated)",
+                    "const bool integrated = dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;",
+                    'getenv("RX_VK_ASTC_BC_ALL")',
+                    "(bw * bh >= 36 || all) ? low : 64ull << 20",
+                    "dev.props.deviceID == 0x164E || dev.props.deviceID == 0x13C0",
+                    'getenv("RX_VK_ASTC_CPU")', "v = !env_value_off(e)", "astc_on_cpu()"):
         if needle not in src:
             raise SystemExit("vk_texture.cpp no longer has: " + needle)
 

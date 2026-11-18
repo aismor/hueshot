@@ -75,6 +75,9 @@ struct Texture {
     bool writeback_noted = false;  // (in the list of textures waiting for that)
     uint64_t written_back_hash = 0; // (its memory's hash after that write-back: still its own texels there, or the CPU's since)
     uint64_t verify_hash = 0;      // (RX_VK_VERIFY_DIM: its guest memory's hash when last uploaded)
+    uint64_t blocks_hash = 0;      // decoded ASTC: hash at its last whole upload (astc_reuse.h)
+    bool freed_listed = false;     // finalized and available as a source for an identical texture
+    bool reuse_retire = false;     // its image served another texture; retire next frame unless reused itself
     uint32_t checked_epoch = 0;
     uint64_t upload_value = 0;   // (the submission its last upload was recorded in, and the parallel replay's segment
     uint64_t upload_seg = 0;     // that recorded it: one before it in the stream uploads it again)

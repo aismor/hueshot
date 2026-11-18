@@ -31,6 +31,16 @@ one stays as the fallback (on Windows, in a build made with wgpu-native). mkw-re
 Eglantine clone) runs dumped NVN2 programs through Eglantine's recompiler offline (SPIR-V; it prints what each program
 reads from the constant banks).
 
+The Vulkan ASTC image reuse and between-pass dead-target sweep were adapted from Longshot commits `72c40d7e` and
+`6f1cefc6` (2026-11-16), preserving Hueshot's accumulated-overlap rule, pending-readback retirement and target pool.
+
+The output-stage CRT filters were adapted from Longshot commit `08abc00e` (2026-11-15): `vk/crt_policy.h`,
+`vk/shaders/crt_downsample.comp` and the compute adapters `crt_lottes.comp`, `crt_hyllian.comp` and `crt_zfast.comp`
+with their generated headers, wired into Hueshot's `vk_framegen.cpp` and `vk_menu.cpp`. The upstream libretro sources,
+their authors, licences and pinned hashes are in `third_party/crt_shaders/` (Timothy Lottes' public-domain crt-lottes,
+Hyllian's MIT crt-hyllian-fast with cgwg's dotmask, and Greg Hogan's GPL-2.0-or-later zfast CRT; the box downsample is
+the port's own).
+
 Hueshot's AMD FSR 4 (`vk/vk_fsr4.cpp`) was first written for Lichii's OoT branch (madebyjordan/Lichii-Hyrule,
 `renderer_vulkan/vk_fsr4_upscaler.cpp`; GPL-3.0-or-later), with its Linux path (a Vulkan FSR 4 library through dlopen) by
 N3oTraX. It draws with the frame chain of hckrman101's NVIDIA DLSS (#841), moved into `vk/vk_temporal.cpp` so both

@@ -164,6 +164,8 @@ void log_program_stages(const NvnState& s, const char* why);
 Shader::AttributeType attribute_type_of(uint32_t vattr);
 Shader::TextureType handle_texture_type(uint32_t handle);
 void shader_stats(int64_t* translated, int64_t* failed);
+/// After the preparation's failed count: every program represented by each capped "not translated" line.
+void shader_fail_lines();
 /// The networks this card left out on purpose (not among the failed)
 int64_t shader_left_out();
 double shader_translate_ms();

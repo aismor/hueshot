@@ -314,6 +314,16 @@ void wait_value(uint64_t v) {
     vkWaitSemaphores(dev.device, &wi, UINT64_MAX);
 }
 bool wait_recorded(uint64_t f, uint64_t timeout_ns, int* ok);
+/// What the calling thread's last wait on the recordings' timeline returned. A lost recording wait is said there and
+/// not again by vk_timeline_wait as a capture wait that timed out.
+thread_local VkResult wait_rec_result = VK_SUCCESS;
+/// Say a timeline wait that returned VK_ERROR_DEVICE_LOST as a lost device, rather than as a timeout. The next submit
+/// or the GPU hang watch still ends the game as before.
+void wait_lost(const char* what, uint64_t v) {
+    static std::atomic<int> logged{0};
+    if (logged++ >= 8) return;
+    logf("vk: %s %llu came back VK_ERROR_DEVICE_LOST: the GPU device is lost", what, (unsigned long long)v);
+}
 } // namespace
 uint64_t vk_timeline_completed() { return timeline ? completed() : 0; }
 void vk_timeline_wait(uint64_t v) {   // (at most 250 ms: a submission held back behind the caller's thread goes on without it)
@@ -322,6 +332,7 @@ void vk_timeline_wait(uint64_t v) {   // (at most 250 ms: a submission held back
     // submission is stopped at an event wait; wait on `rec_timeline` where that recording actually signalled completion)
     int ok = 0;
     if (wait_recorded(v, 250000000ull, &ok)) {
+        if (wait_rec_result == VK_ERROR_DEVICE_LOST) return;   // said by wait_rec_seq
         if (!ok) {
             static std::atomic<int> logged{0};
             if (logged++ < 8)
@@ -335,10 +346,12 @@ void vk_timeline_wait(uint64_t v) {   // (at most 250 ms: a submission held back
     wi.semaphoreCount = 1;
     wi.pSemaphores = &timeline;
     wi.pValues = &v;
-    if (vkWaitSemaphores(dev.device, &wi, 250000000ull) == VK_TIMEOUT) {
+    const VkResult res = vkWaitSemaphores(dev.device, &wi, 250000000ull);
+    if (res == VK_TIMEOUT) {
         static std::atomic<int> logged{0};
         if (logged++ < 8) logf("vk: a capture's wait for write-back %llu timed out (done %llu)", (unsigned long long)v, (unsigned long long)completed());
     }
+    if (res == VK_ERROR_DEVICE_LOST) wait_lost("a capture's wait for write-back", v);
 }
 namespace {
 
@@ -2297,6 +2310,7 @@ void bench_frame(int64_t presents) {
 /// per-draw phases' cheap part is sampled, one draw in eight (PROF_HOT): an estimate, exact with RX_VK_PROF_ALL=1
 struct SlowWatch {
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    int64_t cpu0 = thread_cpu_ns();   // (hueshot: wall time against CPU time: a phase that waited, not worked)
     int64_t prof0[PROF_COUNT];
     int64_t ms0[4];   // (hueshot: memory sync's parts and the lock wait, at the start)
     const char* what;
@@ -2315,6 +2329,10 @@ struct SlowWatch {
                                                 "memory sync", "queue submit", "slot wait"};
         char line[600];
         int k = snprintf(line, sizeof line, "vk: slow %s: %.1f ms:", what, ms);
+        if (cpu0) {   // (hueshot: of which this thread's own CPU time; the rest waited)
+            const int64_t c1 = thread_cpu_ns();
+            k += snprintf(line + k, sizeof line - k, " cpu %.1f,", (c1 - cpu0) / 1e6);
+        }
         for (int i = 2; i < PROF_COUNT; i++) {
             const double d = (prof_ns[i] - prof0[i]) / 1e6;
             if (d >= 1.0) k += snprintf(line + k, sizeof line - k, " %s %.1f", names[i], d);
@@ -2873,6 +2891,7 @@ static void wait_rec_seq(uint64_t seq, uint64_t timeout_ns, int* ok) {
     uint64_t reached = 0;
     if (vkGetSemaphoreCounterValue(dev.device, rec_timeline, &reached) == VK_SUCCESS && reached >= seq) {
         *ok = 1;
+        wait_rec_result = VK_SUCCESS;
         return;
     }
     // (a batched submit holds its recordings' signal until the batch goes out: the readback wait in invalidate came here
@@ -2882,10 +2901,14 @@ static void wait_rec_seq(uint64_t seq, uint64_t timeout_ns, int* ok) {
     wi.semaphoreCount = 1;
     wi.pSemaphores = &rec_timeline;
     wi.pValues = &seq;
+    VkResult res;
     {
         FpsWait fw(fps_stats::kGpuWait);   // (the FPS counter's Breakdown)
-        *ok = vkWaitSemaphores(dev.device, &wi, timeout_ns) == VK_SUCCESS;
+        res = vkWaitSemaphores(dev.device, &wi, timeout_ns);
     }
+    *ok = res == VK_SUCCESS;
+    wait_rec_result = res;
+    if (res == VK_ERROR_DEVICE_LOST) wait_lost("a wait for recording", seq);
 }
 uint64_t fence();
 /// (hueshot) A fence of one queue (nvnQueueFenceSync): the value of that queue's last submission
@@ -3222,7 +3245,7 @@ void invalidate(uint64_t gpu, uint64_t size) {
             // (not unforced: the submitting thread's replay with RX_VK_SYNC_WAITS=0 or RX_VK_PER_QUEUE_FENCES=0, as before)
             const bool behind = async_on();
             const bool unforced = behind || (sync_waits_on() && !per_queue_fences_off());
-            static std::atomic<int64_t> settled{0}, held_back{0};
+            static std::atomic<int64_t> settled{0}, held_back{0}, in_place{0};
             // That is the console's answer for a read the game makes without waiting for the GPU: the latest result that has
             // landed. Where the game does wait first (a fence, nvnSyncWait, nvnQueueFinish), that wait is the exact one and
             // the read after it finds its write-back recorded. RX_VK_READBACK_EXACT (a test, off): 1, every range is read
@@ -3271,6 +3294,7 @@ void invalidate(uint64_t gpu, uint64_t size) {
                 if (by_part && part && in_place_after) held_back++;
                 const bool parted = unforced && by_part && part && whole <= completed() && !in_place_after &&
                                     wait_recorded_part(part, UINT64_MAX, &ok);
+                if (!parted && !part) in_place++;   // pages written in place: the whole submission was waited for
                 if (!parted && !(unforced && wait_recorded(v, UINT64_MAX, &ok))) {
                     if (unforced && replay_behind()) wait_queue_empty();   // (not recorded whole: as before)
                     if (behind) readback_fell_back();
@@ -3303,9 +3327,10 @@ void invalidate(uint64_t gpu, uint64_t size) {
                 if (log_ranges) rb_ranges_log();
                 const int64_t n = waited.exchange(0);
                 logf("vk: readbacks of GPU results: %lld of 3000 waited for their write-back, %.2f ms each; %lld looked at the "
-                     "stopped queues first, %lld waited for their submission's last part (guest memory read in place after theirs)",
+                     "stopped queues first, %lld waited for their submission's last part (guest memory read in place after theirs), "
+                     "%lld waited for their whole submission (their pages written in place, no mirror)",
                      (long long)n, n ? ns.exchange(0) / (double)n / 1e6 : 0.0, (long long)settled.exchange(0),
-                     (long long)held_back.exchange(0));
+                     (long long)held_back.exchange(0), (long long)in_place.exchange(0));
             }
         }
     }
@@ -4136,6 +4161,7 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
     uint32_t sw = 0, sh = 0;
     bool shot = false, interpolated = false;
     VkImage made_src = VK_NULL_HANDLE;
+    VkImage headless_fx = VK_NULL_HANDLE;   // CRT output at the capture pixel grid, reused by both screenshot routes
     {
         std::lock_guard lk(replay_mu);
         bench_frame(presents);
@@ -4178,7 +4204,7 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
                                                                                         : "the SDR picture expanded to HDR10");
             }
         }
-        if (tex && !dev.offscreen && (opts.upscale || opts.sharpness || dev.hdr || wide_sides_possible())) {   // (and ultrawide's menu sides)
+        if (tex && !dev.offscreen && (opts.upscale || opts.sharpness || opts.crt_filter || dev.hdr || wide_sides_possible())) {
             // Keep the sampled view with the same cached image as the direct present, before advancing its age.
             direct_view = texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample);
             tex->last_frame = texture_frame_no();
@@ -4219,8 +4245,18 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
         if (src && (dev.offscreen || shots) && offscreen_init()) {
             if (dev.offscreen) {
                 image_barrier(r.cmd, off_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-                blit_crop(r.cmd, src, sw, sh, crop, off_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          dev.swap_extent.width, dev.swap_extent.height);
+                // No swapchain exists here. Exercise the same output effects on every frame, at the
+                // requested capture size, not only when a screenshot is due. Off keeps the original blit.
+                if (opts.crt_filter && tex)
+                    headless_fx = framegen_scale(r.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample),
+                                                 src, sw, sh, crop, kShotW, kShotH,
+                                                 present_native_pq.load(std::memory_order_relaxed));
+                if (headless_fx)
+                    blit_crop(r.cmd, headless_fx, kShotW, kShotH, nullptr, off_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              dev.swap_extent.width, dev.swap_extent.height);
+                else
+                    blit_crop(r.cmd, src, sw, sh, crop, off_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              dev.swap_extent.width, dev.swap_extent.height);
             }
             // (RX_VK_SHOT_FROM / _TO: every present in that range too)
             static const int64_t shot_from = getenv("RX_VK_SHOT_FROM") ? atoll(getenv("RX_VK_SHOT_FROM")) : -1;
@@ -4259,7 +4295,7 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
                 // shot, and it is not under present_image_mu, which frame generation's display thread takes for the same pass)
                 static const bool shot_fx = env_on("RX_VK_SHOT_FX");
                 // (pq as the window's present has it: Native HDR's picture through the 10-bit pass, not a format switch each shot)
-                const VkImage fx_img = shot_fx && tex ? framegen_scale(r.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample),
+                const VkImage fx_img = headless_fx ? headless_fx : shot_fx && tex ? framegen_scale(r.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample),
                                                                        src, sw, sh, crop, kShotW, kShotH,
                                                                        present_native_pq.load(std::memory_order_relaxed))
                                                         : VK_NULL_HANDLE;
@@ -4272,7 +4308,8 @@ void do_present(const nvn_tex* t, const int crop[4], float cover) {
                 capture_host_read_barrier(r.cmd, shot_bufs[presents & 1], (VkDeviceSize)kShotW * kShotH * 4);
             }
         }
-        shot_ask_record(r.cmd, src, sw, sh, crop, value);   // (the control bridge's, host/control.c)
+        shot_ask_record(r.cmd, headless_fx ? headless_fx : src, headless_fx ? kShotW : sw, headless_fx ? kShotH : sh,
+                        headless_fx ? nullptr : crop, value);   // the bridge captures the same CRT output, without Hueshot overlays
         memory_end_submission(r.cmd, r.part);
         full_barrier(r.cmd);
         submit_recording(r);   // (nothing is stopped at a present: drain)

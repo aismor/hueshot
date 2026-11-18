@@ -1042,6 +1042,41 @@ def _cleanup_build_child(child, parent):
             (_cleanup_path(script) == _cleanup_path(expected) or ntpath.normcase(script) == "nx2\\build.py"))
 
 
+WORK_LOCK = "make_game.lock"   # (in the work folder: held by the build using it, lock_work)
+_WORK_LOCK = []   # ([its path, the open lock file], kept open for the whole run: closing it, or the process ending, lets it go)
+
+
+def release_work():
+    """Let go of the work folder's lock, if this process holds one. A build does not need to: the lock goes when its process ends.
+    Tests that call main() do, because Windows cannot delete a temporary work folder while its lock file is still open."""
+    if _WORK_LOCK:
+        _WORK_LOCK[1].close()
+        _WORK_LOCK.clear()
+
+
+def lock_work(work):
+    """Allow one build at a time in a work folder. Concurrent builds share its lift, object cache and lists, so one can compile
+    work the other is already compiling or replace files underneath it. This is an OS lock rather than a marker: it goes away
+    however the holder exits. A second main() in this process keeps a lock on the same folder and releases one on another."""
+    path = os.path.join(os.path.abspath(work), WORK_LOCK)
+    if _WORK_LOCK and _WORK_LOCK[0] == path:
+        return
+    release_work()
+    f = open(path, "a+b")
+    try:
+        f.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        fail("Another build is using the work folder %s. Wait for it to end (or stop it), then build again." % work)
+    _WORK_LOCK[:] = [path, f]
+
+
 def stop_stray_compilers(work, default_work):
     """Best-effort cleanup for issues 501/530, restricted to proven target outputs/work.
     An interrupted Builder update can leave a compiler holding a64_fpx.h (Errno 22)
@@ -1827,7 +1862,28 @@ def generated_names(work):
     return names
 
 
-def forget_failed_build(work, linked, failed=()):
+def forget_renderer_objects(work):
+    """The renderer's objects (sa/build/obj/vk_*, nx2/build.py's vk_jobs) out of the work folder and its object cache:
+    the next build compiles the renderer again, and nothing else. Hueshot has no shared object store."""
+    obj_dir = os.path.join(work, "sa", "build", "obj")
+    try:
+        names = [f for f in os.listdir(obj_dir) if f.startswith("vk_")]
+    except OSError:
+        return
+    keys = []
+    for f in names:
+        if f.endswith(".sha1"):
+            with contextlib.suppress(OSError), open(os.path.join(obj_dir, f)) as h:
+                keys.append(h.read().strip())
+    for key in keys:
+        with contextlib.suppress(OSError):
+            os.remove(os.path.join(work, "objcache", key + ".o"))
+    for f in names:
+        with contextlib.suppress(OSError):
+            os.remove(os.path.join(obj_dir, f))
+
+
+def forget_failed_build(work, linked, failed=(), game_linked=False):
     """(hueshot) After a compile or link that failed. It forgets the lift: the next build translates the game again. A lifted file
     cut short (an antivirus, a full disk, a stopped run: "g_module_b" for g_module_base, issue 1197) or lifted C another builder
     left (20 undefined game functions at the link, issue 1176) otherwise failed the same way at every try, the key still matching.
@@ -1839,7 +1895,16 @@ def forget_failed_build(work, linked, failed=()):
     failed: the files build.py could not compile, alone too (its "FAILED <name>" lines). When every one is a source of the
     repository (host/, gpu/, third_party/), none the lift's or build.py's own, the translation is not what failed: it is kept, and
     the next build compiles the files not compiled yet without translating the game again (a typo in a host file cost a whole
-    lift, ~5 minutes on Windows). A build stopped without such a line, or one with a generated file among them, forgets it as before"""
+    lift, ~5 minutes on Windows). A build stopped without such a line, or one with a generated file among them, forgets it as before.
+    game_linked: the game itself linked (build.py's "linked <exe>: N MB"), and what failed came after it: the renderer's link or its
+    unresolved symbols (check_vk_symbols), made only of gpu/vk and its libraries. The translation and the game's objects linked, so
+    they are kept; only the renderer's objects go, in case a cached one is what failed (issue 1076: an extern written inside an
+    anonymous namespace in gpu/vk cost a whole lift and compile)"""
+    if game_linked:
+        forget_renderer_objects(work)
+        print("the build failed after the game linked, in the renderer: the next one keeps the translation and the game's "
+              "objects, and compiles only the renderer again", flush=True)
+        return
     if not linked and failed:
         generated = generated_names(work)
         if not any(name.startswith("code_") or name in generated for name in failed):
@@ -2190,6 +2255,7 @@ def main(a=None):
         fail("needs --out, and --nup or --romfs with --exefs")
     out = os.path.abspath(a.out)
     work = os.path.abspath(a.work)
+    lock_work(work)   # (before anything is read or cleared there: stop_stray_compilers, drop_stale_objects and the lift)
     a.language = build_language(a, out)   # (now: the folder's own language.txt is still the one the player left)
     warn_slow_disk(out, work)   # (a warning, not a stop: a hard drive still builds, only much slower)
     check_writable(out)
@@ -2436,10 +2502,13 @@ def main(a=None):
                 plan[:] = [int(parts[1]), int(parts[2])]
     linking = []   # (build.py's "compiled in Ns, 0 failed": every object made, the link next)
     failed = []   # (build.py's "FAILED <name> (...": a file that did not compile, alone either)
+    game_linked = []   # (build.py's "linked <...>/hueshot[.exe]: N MB": the game linked, the renderer's link next)
 
     def compile_line(line):
         if re.match(r"compiled in \d+s, 0 failed$", line):
             linking.append(line)
+        if re.match(r"linked .*[\\/]hueshot(\.exe)?: \d+ MB \(", line):
+            game_linked.append(line)
         m = re.match(r"FAILED (\S+) \(", line)
         if m:
             failed.append(m.group(1))
@@ -2457,7 +2526,7 @@ def main(a=None):
             done["n"] = 0.0
             run(PY + ["nx2/build.py", "--standalone", "--jobs", str(a.jobs)], env, compile_line)
     except SystemExit:
-        forget_failed_build(work, bool(linking), failed)
+        forget_failed_build(work, bool(linking), failed, bool(game_linked))
         raise
     compile_seconds = time.time() - compile_started
 

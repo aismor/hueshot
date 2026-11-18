@@ -230,6 +230,60 @@ def linker(*opts):
     return [arg for opt in opts for arg in ("-Xlinker", "-Xlink=" + opt if toolchain.mingw() else opt)]
 
 
+IMAGE_LIMIT = 2**31   # (x86-64 code reaches its data RIP-relative, +-2 GB)
+
+
+def image_span(path):
+    """Bytes from the start of the image to the end of its last section, as the loader maps it: a PE's SizeOfImage,
+    or an ELF's PT_LOAD segments from the lowest address to the highest end. None when the file is neither.
+
+    The game's code reaches its data RIP-relative, through a signed 32-bit offset. lld does not range-check those
+    fixups on x86-64 COFF, so a larger linked image could run while reading 4 GB away from its intended data. On ELF
+    this is a second check behind lld's own range checks."""
+    import struct
+    with open(path, "rb") as f:
+        head = f.read(4096)
+        if head[:2] == b"MZ" and len(head) >= 64:
+            pe = struct.unpack_from("<I", head, 0x3C)[0]
+            f.seek(pe)
+            hdr = f.read(24 + 60)
+            if hdr[:4] != b"PE\0\0" or len(hdr) < 24 + 60:
+                return None
+            return struct.unpack_from("<I", hdr, 24 + 56)[0]   # OptionalHeader.SizeOfImage, PE32 and PE32+ alike
+        if head[:4] == b"\x7fELF" and len(head) >= 0x40 and head[4] == 2:   # ELFCLASS64
+            e = "<" if head[5] == 1 else ">"
+            phoff, = struct.unpack_from(e + "Q", head, 0x20)
+            phentsize, phnum = struct.unpack_from(e + "HH", head, 0x36)
+            f.seek(phoff)
+            table = f.read(phentsize * phnum)
+            if phentsize < 0x30 or len(table) != phentsize * phnum:
+                return None
+            loads = []
+            for i in range(phnum):
+                p_type, = struct.unpack_from(e + "I", table, i * phentsize)
+                if p_type == 1:   # PT_LOAD
+                    vaddr, = struct.unpack_from(e + "Q", table, i * phentsize + 0x10)
+                    memsz, = struct.unpack_from(e + "Q", table, i * phentsize + 0x28)
+                    loads.append((vaddr, vaddr + memsz))
+            return max(b for _, b in loads) - min(a for a, _ in loads) if loads else None
+    return None
+
+
+def image_too_big(exe):
+    """Return the link failure when the linked image is past what its code can address, deleting that image."""
+    span = image_span(exe)
+    if span is None or span < IMAGE_LIMIT:
+        return None
+    try:
+        os.remove(exe)
+    except OSError:
+        pass
+    return ("link FAILED: the game's image is %d MB, past the %d MB its code can address (x86-64 RIP-relative); "
+            "the linker does not check this and the game would read the wrong memory. The lifted code is too big for "
+            "one image: build it at -O1 (not -O0), or split the lifted code into more than one module"
+            % (span >> 20, IMAGE_LIMIT >> 20))
+
+
 def HOT_ORDER():
     p = os.path.join(kit.WORK, "hot_order.txt")
     if not os.path.exists(p) or os.environ.get("RX_NO_ORDER"):
@@ -1408,21 +1462,27 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
         # (as each ends, not in order: the builder app shows progress from these lines, and the biggest file comes first)
         submitted = {ex.submit(compile_one, job): job for job in jobs}
-        for future in concurrent.futures.as_completed(submitted):
-            src, secs, err = future.result()
-            size = src_size(src) >> 20
-            if err:
-                failed.append(submitted[future])
-                print("not compiled yet: %s (%d MB, %.0fs), tried again alone at the end:\n%s"
-                      % (os.path.basename(src), size, secs, err[-1500:]), flush=True)
-            else:
-                print("  %-16s %4d MB  %6.0fs  (%.0fs)" % (os.path.basename(src), size, secs, time.time() - t0), flush=True)
-            if counted:
-                print("@@file %s %.1f %s" % (os.path.basename(src), secs,
-                                             "failed" if err else "cached" if secs <= 0 else "new"), flush=True)
-                if not err and expected.get(src):
-                    pending.remove(expected[src].pop())
-                    print("@@eta %d" % eta_left(pending, eta_jobs), flush=True)
+        try:
+            for future in concurrent.futures.as_completed(submitted):
+                src, secs, err = future.result()
+                size = src_size(src) >> 20
+                if err:
+                    failed.append(submitted[future])
+                    print("not compiled yet: %s (%d MB, %.0fs), tried again alone at the end:\n%s"
+                          % (os.path.basename(src), size, secs, err[-1500:]), flush=True)
+                else:
+                    print("  %-16s %4d MB  %6.0fs  (%.0fs)" % (os.path.basename(src), size, secs, time.time() - t0), flush=True)
+                if counted:
+                    print("@@file %s %.1f %s" % (os.path.basename(src), secs,
+                                                 "failed" if err else "cached" if secs <= 0 else "new"), flush=True)
+                    if not err and expected.get(src):
+                        pending.remove(expected[src].pop())
+                        print("@@eta %d" % eta_left(pending, eta_jobs), flush=True)
+        except BaseException:
+            # (a compile that raised (its compiler gone, an object or its stamp not writable) or Ctrl-C: the pool's exit would
+            # start every compile still queued first, the whole compile with nothing said, before the build stopped)
+            ex.shutdown(wait=False, cancel_futures=True)
+            raise
     # (a compiler that ran out of memory beside the others dies "due to signal": a player's 24 MB code_021.c, 2026-11-08. The
     # files that failed are compiled again one at a time, with all the memory, before the build gives up)
     still = 0
@@ -1461,6 +1521,10 @@ def main():
             print("link FAILED (%.0fs), %d undefined symbols" % (time.time() - t, len(undefined)))
             print("\n".join(undefined[:60]) if undefined else (r.stdout + r.stderr)[-3000:])
             return 1
+        too_big = image_too_big(exe)
+        if too_big:
+            print(too_big)
+            return 1
         print("linked %s: %d MB (%.0fs)" % (exe, os.path.getsize(exe) >> 20, time.time() - t))
         sdl = os.environ.get("HUESHOT_SDL2", "")   # (libSDL2-2.0.so.0 beside it, when the AppImage brings one)
         if sdl and os.path.exists(sdl):
@@ -1485,6 +1549,10 @@ def main():
         if r.returncode:
             print("link FAILED (%.0fs), %d undefined symbols" % (time.time() - t, len(undefined)))
             print("\n".join(undefined[:60]) if undefined else (r.stdout + r.stderr)[-3000:])
+            return 1
+        too_big = image_too_big(exe)
+        if too_big:
+            print(too_big)
             return 1
         print("linked %s: %d MB (%.0fs)" % (exe, os.path.getsize(exe) >> 20, time.time() - t))
         if wgpu:   # (wgpu_native.dll beside it; in use while the game runs)
@@ -1546,10 +1614,13 @@ def main():
             print("link FAILED (%.0fs), %d undefined symbols" % (time.time() - t, len(undefined)))
             print("\n".join(undefined[:40]) if undefined else (r.stdout + r.stderr)[-3000:])
             return 1
+        too_big = image_too_big(dll)
+        if too_big:
+            print(too_big)
+            return 1
         print("linked %s: %d MB, no undefined symbols (%.0fs)" % (dll, os.path.getsize(dll) >> 20, time.time() - t))
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

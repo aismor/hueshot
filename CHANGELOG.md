@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* **vk:** selectable CRT monitor and TV filters, ported from Longshot: **CRT filter** (Off, Lottes aperture grille, Lottes consumer TV, Hyllian Fast, zfast CRT) and **CRT lines** (240, 480 or 720 virtual lines), both live and preset-exempt (`crt_filter=`, `crt_lines=`); **CRT lines** is shown only while a filter is chosen, and its saved value returns with the row. The finished SDR picture, HUD included, is box-downsampled to the virtual raster and filtered after window scaling; Hueshot's menu and overlays stay clean, Native HDR (PQ) bypasses it, and Off allocates nothing. Shader sources and licences are in `third_party/crt_shaders/`.
+
+### Performance Improvements
+
+* **host:** character shadow maps reserve stepped storage (`HOS_SHADOW_BUCKET`, 384 by default), reducing transient render-target address churn.
+* **vk:** finalized ASTC textures can supply identical textures made at new addresses by image copy instead of another decode (`RX_VK_ASTC_REUSE=1`; off by default while its in-game test is investigated).
+* **vk:** dead transient render targets are swept between the ten-present eviction passes, and unused pooled target images expire after eight presents (`RX_VK_DEAD_EVERY`, `RX_VK_DEAD_MIN_UNUSED`, `RX_VK_POOL_IDLE`).
+
 ## [0.0.2](https://github.com/aismor/hueshot/releases/tag/v0.0.2) (2026-11-15)
 
 ### Performance Improvements
