@@ -10,6 +10,8 @@ Taken unmodified except as noted:
 `nn_hid.c`, `nn_libc.c`, `nn_diag.c`, `nn_applet.c`, `nn_audio.c`, `nvdrv.c`.
 
 mkw-recomp's changes:
+- **Stable shadow storage.** Character shadow-map storage buckets were adapted from Longshot commit `6f44b387`
+  (2026-11-16), with the policy isolated in `shadow_slot.h`.
 - **The guest window.** It is 64-bit, 512 GB, reserved whole. The image sits at Eden's `0x80000000`, the address the
   code was lifted for. The heap starts at 64 GB, and address regions grow down from 512 GB (`hos.h`). The runtime
   commits what it hands out (`hos_commit`), and `mkw_glue.c` commits anything else on first touch. TOTK's whole

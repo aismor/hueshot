@@ -249,6 +249,9 @@ Pipeline-cache file ownership, temporary storage and failure behavior are descri
 | `RX_VK_FIFO=1`, `RX_VK_IMMEDIATE=1` | V-Sync On (FIFO) or Off (immediate) for one run, over the menu's V-Sync row |
 | `HOS_VCORES=0`, `HOS_CORES=<1..8>`, `HOS_RESERVE_CORE=0` | No virtual cores; the cores the game sees (6); no core kept for the replay (one is, with 8 or more logical processors) |
 | `HOS_NATIVE_ZSTD=0/1/2`, `HOS_NATIVE_ZSTD_FRAMES=0` | The game's zstd decodes on the host's libzstd 1.5.7 (`host/hos_zstd.c`), both on by default: `HOS_NATIVE_ZSTD` the stream decode (unset or 1 gives the virtual core up while it decodes, 2 keeps it, 0 runs the lifted decoder), `HOS_NATIVE_ZSTD_FRAMES` the resource loaders' whole-buffer decode (0: lifted). The log names each path once |
+| `HOS_SHADOW_BUCKET=<step>` | Character shadow maps reserve storage at stepped sides (384 by default), keeping later render targets at stable addresses as shadows resize. `0`: each map's exact storage, as before |
+| `RX_VK_ASTC_REUSE=1` | Off by default. A texture whose blocks and image shape match one finalized by the game copies its decoded image and retires the old texture at the next present, instead of a new decode. Off, no blocks are hashed. Its first in-game test (the copies firing at 2560x1440) wedged the GPU and the desktop, so it stays opt-in until that is understood |
+| `RX_VK_DEAD_EVERY=<presents>`, `RX_VK_DEAD_MIN_UNUSED=<presents>`, `RX_VK_POOL_IDLE=<presents>` | Dead transient targets are checked every present by default after one unused present; pooled target images wait 8 presents by default. `RX_VK_DEAD_TARGETS=0` disables the frequent dead-target sweep |
 
 ### Building
 
@@ -500,6 +503,8 @@ number is not the obvious one:
 | `resolution` | 0 Auto, 1 100%, 2 75%, 3 67%, 4 50% |
 | `output_res` | A size, `<width>x<height>`: 2048x1152 (the game's own), one of the screen's display modes (the menu's Aspect ratio and Output resolution rows), or any other with each side a multiple of 8 (rounded down), at least 640x360, at most 5120x2880's pixels, 5:4 to 48:9; anything else is the game's own. A size more than 1 % off 16:9 sets the picture's shape (`host/hos_wide_size.h` `hos_output_own_shape`). The Aspect ratio row saves `ultrawide=` 1 for the monitor's own shape, else 0; another shape is `output_res`'s own. The numbers saved before (0 2048x1152, 1 2560x1440, 2 3840x2160, 3 1920x1080, 4 5120x1440, 5 5120x2880) are still read |
 | `upscaling` | 0 Off, 1 Catmull-Rom, 2 Lanczos |
+| `crt_filter` | 0 Off (default), 1 Lottes aperture grille, 2 Lottes consumer TV, 3 Hyllian Fast, 4 zfast CRT |
+| `crt_lines` | 0 240 virtual lines (default), 1 480, 2 720; capped at half the destination height, at least one line |
 | `sharpness`, `rumble_strength`, `motion_sensitivity_x`, `motion_sensitivity_y` | percent |
 | `mouse_sensitivity` | hundredths: 100 is 1.00 |
 | `field_of_view` | 50 to 150 percent of the current vertical gameplay FOV; 100 is the original. Applies immediately, before projection and culling. The resulting vertical angle stays within 5 to 140 degrees |
@@ -518,6 +523,40 @@ The other rows are 0 Off and 1 On. Some are read at the start, before the menu e
 through (inputs timed in frames, screenshots, waits for the game's state, the Insert menu's settings, quit), with
 `scripts/hueshot_ctl.py` as its client. Off unless set; see [control.md](control.md).
 
+### CRT output stage
+
+The Graphics tab's **CRT filter** and **CRT lines** rows follow Window scaling filter. Both are live, preset-exempt
+options in `gpu/vk/vk_menu.h`; the usual row-name key generation, read-time clamp and save path handle `crt_filter`
+and `crt_lines`, so neither needs a switch, a host/renderer API field or a restart. Missing keys keep Off/240. **CRT
+lines** is shown only with a CRT filter chosen (`row_shown` hides it while the filter is Off, as HDR's levels are hidden
+with HDR off); its saved value stays and returns with the row.
+
+The stage takes the finished SDR picture after window scaling, sharpness and ultrawide-side treatment, on each
+displayed frame after frame generation. It downsamples to a virtual raster (`gpu/vk/shaders/crt_downsample.comp`, an
+exact area box over the source texels), then applies the selected CRT shader at the destination size
+(`crt_lottes.comp`, `crt_hyllian.comp`, `crt_zfast.comp`, all 8x8 compute dispatches with a 36-byte push constant).
+The game's HUD is already in that picture; Hueshot's menu, FPS counter and other overlays are drawn afterwards, so they
+stay sharp. Returning to Off allocates no CRT image and records no dispatch.
+
+When the checked source rectangle is larger than the destination, the box downsample does the shrinking; the window
+effect pass is not run for it (Hueshot has no separate shrink pass). With CRT Off, the direct linear copy is unchanged.
+Native HDR still uses the 10-bit scaling pass and skips CRT.
+
+The requested virtual height is 240, 480 or 720, capped at `max(1, destination_height / 2)` using integer division
+(`gpu/vk/crt_policy.h`); the virtual width follows the destination aspect. This does not change Render resolution,
+force 4:3, or introduce integer scaling. Destination-pixel masks and non-integer raster scaling can show moire; the cap
+limits scanline undersampling but does not make every output size regular. Lottes' flat aperture-grille setting is a
+PVM-style look, not calibration to a particular Sony model; its consumer-TV setting uses curvature and the TV shadow
+mask. Hyllian Fast and zfast CRT are the small upstream algorithms, not their larger multipass relatives.
+
+These filters expect SDR. Expanded HDR runs after CRT through the existing HDR expansion. An actual Native HDR PQ
+picture bypasses CRT without changing the saved selection; it is never processed as sRGB. Native-HDR CRT presets,
+composite/NTSC simulation, phosphor persistence, bezels and downloaded presets are not supported. The imported shader
+sources, their pinned hashes and licences are in `third_party/crt_shaders/`; the compute adapters and their generated
+headers were ported from Longshot `08abc00e`. `scripts/crt_shaders.py` regenerates the headers with glslang, and
+`tests/test_crt_options.py`, `tests/test_crt_policy.py`, `tests/test_crt_shaders.py` and
+`tests/upscale_independent_test.cpp` cover the rows, the policy, the wiring and the shader/source contracts.
+
 ## Layout
 
 | Path | What |
@@ -530,7 +569,7 @@ through (inputs timed in frames, screenshots, waits for the game's state, the In
 | `builder/` | Hueshot Builder: the Windows app (.NET 8 WPF), its setup and MSI, and the Linux builder and launcher scripts |
 | `scripts/` | test runs, the profile and log readers, the save copier (`oot_saves.py`), release tooling, `scripts/linux` (dependencies, AppImage) |
 | `tests/` | the game-free checks, all run by `tests/run_all.py` |
-| `third_party/` | a64-kit (Hueshot's few changes marked `(hueshot)`), libopus, zbic (Atmosphere's zstd with ZBIC, for unpacking only), SDL2's licence, Dear ImGui and its Vulkan backend, zstd's decoder, the Libertinus fonts |
+| `third_party/` | a64-kit (Hueshot's few changes marked `(hueshot)`), libopus, zbic (Atmosphere's zstd with ZBIC, for unpacking only), SDL2's licence, Dear ImGui and its Vulkan backend, zstd's decoder, the CRT shaders' pinned sources, the Libertinus fonts |
 
 License: GPL-3.0-or-later, as mkw-recomp: a64-kit's translator is suyu's (GPL-2.0-or-later) and Eden's code is
 GPL-3.0.

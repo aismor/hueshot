@@ -12,6 +12,8 @@
 #include <mutex>
 #include <utility>
 #include "vk_present_rect.h"
+#include "crt_policy.h"
+namespace crt_policy = mkwvk::crt_policy;
 using mkwvk::PresentSourceRect;
 using mkwvk::present_source_rect;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL:%d %s\n", __LINE__, #x); std::exit(1); } } while (0)
@@ -42,7 +44,7 @@ struct Layers { int aspect = 0, level = 0, first = 0, count = 0; };
 struct VkImageBlit { Layers srcSubresource, dstSubresource; Offset srcOffsets[2], dstOffsets[2]; };
 struct Extent { uint32_t width = 0, height = 0, depth = 0; };
 struct VkImageCopy { Layers srcSubresource; Offset srcOffset; Layers dstSubresource; Offset dstOffset; Extent extent; };
-struct { int upscale = 0, sharpness = 0, framegen = 0; } opts;
+struct { int upscale = 0, sharpness = 0, framegen = 0, crt_filter = 0; } opts;
 struct SpyMutex {
     bool held = false;
     void lock() { CHECK(!held); held = true; }
@@ -122,12 +124,25 @@ void pass(int, const Pipe& p, std::initializer_list<std::pair<VkImageView, VkSam
     dispatched_w = w; dispatched_h = h; sampled_view = b.begin()->first; dispatched_pipe = p.pipe;
 }
 void logf(const char*, ...) { CHECK(dispatches > 0); ++logs; }
+// (the CRT pass's routing from the scaler: its own shaders and images are checked by tests/test_crt_policy.py and
+// tests/test_crt_shaders.py; here it is a spy so every path can be asserted without a GPU)
+int crt_calls = 0, crt_after_dispatches = 0;
+uint32_t crt_sw = 0, crt_sh = 0, crt_dw = 0, crt_dh = 0;
+bool crt_available = true;
+VkImageView crt_source = 0;
+VkImage record_crt(int, VkImageView src, uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh, VkImageView& view) {
+    ++crt_calls; crt_sw = sw; crt_sh = sh; crt_dw = dw; crt_dh = dh; crt_source = src;
+    crt_after_dispatches = dispatches;
+    if (!crt_available) return VK_NULL_HANDLE;
+    view = 99; return 98;
+}
 // PRODUCTION_FUNCTIONS
 void reset() {
     scale = {}; fg = {}; opts = {}; wide_now = WideSides{}; dev.push_descriptor = true; vkCmdPushDescriptorSetKHR = true;
     pipe_calls = sampler_calls = image_calls = dispatches = blits = copies = waits = flushes = 0;
     destroyed_pipes = destroyed_layouts = destroyed_sets = 0;
     pipe_fail = sampler_fail = image_fail = pq_pipe_fail = false;
+    crt_calls = crt_after_dispatches = 0; crt_available = true;
 }
 VkImage draw(const int* crop = nullptr, uint32_t dw = 2560, uint32_t dh = 1440, bool pq = false) {
     return framegen_scale(1, 12, 11, 2560, 1440, crop, dw, dh, pq);
@@ -232,6 +247,55 @@ int main() {
     CHECK(!draw(nullptr, 2560, 1440, true) && pipe_calls == 2 && logs == logged + 1 && dispatches == 1);
     CHECK(!draw(nullptr, 2560, 1440, true) && pipe_calls == 2 && logs == logged + 1);
     CHECK(draw() && dispatched_pipe == 3 && dispatches == 2);
+    // (the CRT filter is a pass of its own: with no window effect it maps the game's picture straight to the output,
+    // without a redundant full-size scale image; it needs neither the scaler's pipeline nor interpolation)
+    for (int mode = 1; mode <= 4; ++mode) {
+        reset(); opts.crt_filter = mode;
+        CHECK(draw() == 98 && scale.output_view == 99);
+        CHECK(crt_calls == 1 && pipe_calls == 0 && image_calls == 0 && dispatches == 0);
+        CHECK(crt_sw == 2560 && crt_sh == 1440 && crt_dw == 2560 && crt_dh == 1440 && crt_source == 12);
+        CHECK(draw(nullptr, 3840, 2160) == 98 && crt_dw == 3840 && crt_dh == 2160);
+        CHECK(crt_calls == 2 && pipe_calls == 0 && image_calls == 0 && dispatches == 0);
+        CHECK(!fg.init && !fg.thread_started);
+        opts.crt_filter = 0; CHECK(!draw() && crt_calls == 2);
+    }
+    // (the CRT's own downsample takes a picture larger than the output: no window-effect pass, and no GPU work at all with
+    // the filter Off, as before)
+    const uint32_t smaller[][2] = {{1920, 1080}, {1280, 1440}, {2560, 720}};
+    for (const auto& size : smaller) for (int mode = 0; mode <= 4; ++mode) {
+        reset(); opts.crt_filter = mode;
+        CHECK(draw(nullptr, size[0], size[1]) == (mode ? 98 : VK_NULL_HANDLE));
+        CHECK(pipe_calls == 0 && image_calls == 0 && dispatches == 0);
+        CHECK(crt_calls == (mode ? 1 : 0));
+        if (mode) {
+            CHECK(crt_sw == 2560 && crt_sh == 1440 && crt_dw == size[0] && crt_dh == size[1] && crt_source == 12);
+            crt_available = false;
+            CHECK(draw(nullptr, size[0], size[1]) == VK_NULL_HANDLE);
+            CHECK(crt_calls == 2 && pipe_calls == 0 && !fg.init && !fg.thread_started);
+        }
+    }
+    // (the crop is still cut first, and the CRT reads the checked rectangle, not the whole texture)
+    reset(); CHECK(!draw(resized_crop, 1280, 720));
+    CHECK(pipe_calls == 0 && image_calls == 0 && dispatches == 0 && crt_calls == 0);
+    opts.crt_filter = 1;
+    CHECK(draw(resized_crop, 1280, 720) == 98 && crt_source == scale.cropped.view);
+    CHECK(crt_sw == 1280 && crt_sh == 720 && blits == 1 && pipe_calls == 0 && dispatches == 0);
+    reset(); opts.crt_filter = 1;
+    CHECK(draw(crop, 1920, 1080) == 98 && crt_sw == 60 && crt_sh == 40 && crt_source == scale.cropped.view);
+    CHECK(blits == 1 && image_calls == 1 && pipe_calls == 0);
+    // (a window effect first: the CRT reads the scaled picture; when its images cannot be made the scaler's picture is
+    // shown, as without the filter)
+    reset(); opts.crt_filter = 2; opts.sharpness = 50;
+    CHECK(draw(nullptr, 1920, 1080) == 98 && dispatches == 1 && crt_source == scale.scaled.view);
+    CHECK(crt_sw == 1920 && crt_sh == 1080 && crt_after_dispatches == 1);
+    crt_available = false;
+    CHECK(draw() == scale.scaled.image && scale.output_view == scale.scaled.view);
+    opts.sharpness = 0; CHECK(!draw());
+    // (Native HDR's PQ codes never take the SDR filter; the saved choice stays for the SDR picture)
+    reset(); opts.crt_filter = 1;
+    CHECK(!draw(nullptr, 2560, 1440, true) && crt_calls == 0 && image_calls == 0 && pipe_calls == 0);
+    CHECK(!draw(nullptr, 1920, 1080, true) && crt_calls == 0 && pipe_calls == 0);
+    CHECK(draw() == 98 && crt_calls == 1 && crt_dw == 2560);
     std::puts("PASS: production scaler works independently, caches/retries safely, scales Native HDR's picture in 10 bits, "
-              "and leaves interpolation uninitialized");
+              "routes the finished picture through CRT (or straight to it) and leaves interpolation uninitialized");
 }

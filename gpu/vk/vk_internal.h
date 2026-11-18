@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <array>
 #include <atomic>
+#include <ctime>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -440,6 +441,17 @@ inline int64_t prof_now() {
     QueryPerformanceCounter(&t);
     static const int64_t freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f.QuadPart; }();
     return perf_ticks_to_ns(t.QuadPart, freq);
+}
+// (hueshot) This thread's CPU time (nanoseconds; 0 where the platform has no such clock): a phase that took wall time but
+// little CPU time was waiting — on a lock, the driver, or the scheduler — not working. For the slow-submit and slow-upload
+// lines, which had no way to tell a 20 ms pass from a 20 ms descheduling.
+inline int64_t thread_cpu_ns() {
+#if !defined(_WIN32) && defined(CLOCK_THREAD_CPUTIME_ID)
+    timespec ts{};
+    return clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0 ? (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec : 0;
+#else
+    return 0;
+#endif
 }
 // (hueshot) The per-draw phases (PROF_HOT) run a few thousand times a frame, and each timer is two counter reads: ~25k
 // reads a frame were ~2% of the replay thread. One draw in eight is timed, picked at random per thread, and counted eight
