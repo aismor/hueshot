@@ -12,6 +12,14 @@
 * **vk:** finalized ASTC textures can supply identical textures made at new addresses by image copy instead of another decode (`RX_VK_ASTC_REUSE=1`; off by default while its in-game test is investigated).
 * **vk:** dead transient render targets are swept between the ten-present eviction passes, and unused pooled target images expire after eight presents (`RX_VK_DEAD_EVERY`, `RX_VK_DEAD_MIN_UNUSED`, `RX_VK_POOL_IDLE`).
 
+## [0.0.3-rc.1](https://github.com/aismor/hueshot/compare/v0.0.2...v0.0.3-rc.1) (2026-11-18)
+
+
+### Miscellaneous Chores
+
+* **deps:** bump amannn/action-semantic-pull-request ([7e28bbf](https://github.com/aismor/hueshot/commit/7e28bbf1678c05336126aacc4e9e340defb6c442))
+* **deps:** bump amannn/action-semantic-pull-request from 6.1.1 to 6.1.2 in the actions group across 1 directory ([892e826](https://github.com/aismor/hueshot/commit/892e826ed617913610d6546f6733eadd7501acc2))
+
 ## [0.0.2](https://github.com/aismor/hueshot/releases/tag/v0.0.2) (2026-11-15)
 
 ### Performance Improvements
