@@ -70,7 +70,7 @@ def main():
     for needle in ('dst.format == VK_FORMAT_BC1_RGBA_UNORM_BLOCK ? 0u : 1u',   # (the encoder's mode follows the image)
                    'else if (image == VK_FORMAT_BC1_RGBA_UNORM_BLOCK)',   # (a BC1 image's views are BC1)
                    'getenv("RX_VK_ASTC_BC1")',
-                   'else if (all && astc_opaque::whole_opaque(sc) && bc_reformat(tex, VK_FORMAT_BC1_RGBA_UNORM_BLOCK)) tex.bc1 = 2;',
+                   'else if (all && astc_opaque::whole_opaque(sel) && bc_reformat(tex, VK_FORMAT_BC1_RGBA_UNORM_BLOCK)) tex.bc1 = 2;',
                    'return upload_astc_gpu(tex, total, nullptr);'):   # (back to BC3: uploaded whole)
         if needle not in source:
             raise SystemExit("vk_texture.cpp: missing %r" % needle)
